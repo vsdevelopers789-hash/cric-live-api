@@ -229,14 +229,37 @@ function fmtInning(sc, defaultMaxOvers) {
   return `${runs}${wkts}${oversStr}`.trim();
 }
 
+// డైనమిక్ టైమ్‌జోన్ ఫార్మాటర్ (IST లేదా అభ్యర్థించిన ప్రాంతపు టైమ్‌జోన్ కోడ్‌తో)
+function formatFinishedTimeWithZone(dateObj, tzStr) {
+  try {
+    const targetZone = tzStr || "Asia/Kolkata"; // డీఫాల్ట్‌గా IST
+    const options = {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+      timeZone: targetZone,
+      timeZoneName: 'short'
+    };
+    return new Intl.DateTimeFormat('en-GB', options).format(dateObj);
+  } catch (e) {
+    return dateObj.toLocaleString('en-GB', { timeZone: 'Asia/Kolkata' }) + " IST";
+  }
+}
+
 // =========================================================================
-// 3. COMPLETE LIVE SCORE ROUTE (PURE ISO DATE & STRICT BOOLEAN)
+// 3. COMPLETE LIVE SCORE ROUTE (DYNAMIC TIMEZONE & IST FORMATTER)
 // =========================================================================
 app.get('/api/fetch-score', async (req, res) => {
   const target = req.query.id || "";
   const apiKey = req.query.apikey || "";
   const t1Query = (req.query.t1 || "").trim();
   const t2Query = (req.query.t2 || "").trim();
+  
+  // యూజర్ టైమ్‌జోన్ (క్లయింట్ నుండి వస్తే తీసుకుంటుంది, లేకుంటే ఆటోమేటిక్‌గా Asia/Kolkata - IST)
+  const clientTz = req.query.tz || "Asia/Kolkata";
 
   if (!target) {
     return res.status(400).json({ success: false, message: "Missing id/url parameter" });
@@ -310,6 +333,10 @@ app.get('/api/fetch-score', async (req, res) => {
                 const outT1 = t1Query || t1Name;
                 const outT2 = t2Query || t2Name;
 
+                const now = new Date();
+                const formattedTime = formatFinishedTimeWithZone(now, clientTz);
+                const finalNotice = isFinished ? `${statusText} • Finished on ${formattedTime}` : statusText;
+
                 return res.json({
                   success: true,
                   source: "espncricinfo",
@@ -321,12 +348,12 @@ app.get('/api/fetch-score', async (req, res) => {
                   t2_img: getTeamFlagUrl(outT2),
                   t1_score: s1,
                   t2_score: s2,
-                  statusNotice: statusText,
+                  statusNotice: finalNotice,
                   dynamicBadge: dynamicBadge,
                   targetEquation: statusText,
                   isLive: isLive,
                   isFinished: isFinished,
-                  calculatedFinishedDate: isFinished ? new Date().toISOString() : null
+                  calculatedFinishedDate: isFinished ? formattedTime : null
                 });
               }
             }
@@ -336,7 +363,7 @@ app.get('/api/fetch-score', async (req, res) => {
     }
 
     // -------------------------------------------------------------
-    // B. CRICBUZZ HANDLER (విశ్వసనీయ OVERS, STATUS & FINISHED FIX)
+    // B. CRICBUZZ HANDLER (విశ్వసనీయ OVERS, STATUS & IST TIMEZONE FIX)
     // -------------------------------------------------------------
     if (target.includes("cricbuzz.com") || /^\d{5,7}$/.test(target)) {
       let cbMatchId = target;
@@ -378,7 +405,7 @@ app.get('/api/fetch-score', async (req, res) => {
 
             let s1 = "", s2 = "";
 
-            // 1. inningsScoreList నుండి రెండు జట్ల ఇన్నింగ్స్ స్కోర్లు & ఓవర్లు
+            // 1. inningsScoreList నుండి రెండు జట్ల స్కోర్లు & ఓవర్లు
             const inningsList = minScore.matchScoreDetails?.inningsScoreList || [];
             inningsList.forEach(sc => {
               const scStr = fmtInning(sc, defaultMaxOvers);
@@ -389,7 +416,7 @@ app.get('/api/fetch-score', async (req, res) => {
               }
             });
 
-            // 2. team1Score & team2Score (ముగిసిన మ్యాచ్‌ల పూర్తి స్కోర్లు)
+            // 2. team1Score & team2Score (పూర్తయిన మ్యాచ్ స్కోర్లు)
             const t1ScObj = mHeader.team1Score || minScore.matchScoreDetails?.team1Score;
             const t2ScObj = mHeader.team2Score || minScore.matchScoreDetails?.team2Score;
 
@@ -409,7 +436,7 @@ app.get('/api/fetch-score', async (req, res) => {
               }
             }
 
-            // 3. ఓవర్లు లేకపోతే చేర్చడం
+            // 3. ఓవర్లు లేకపోతే తప్పనిసరిగా చేర్చడం
             if (s1 && !s1.includes("(") && defaultMaxOvers) s1 += ` (${defaultMaxOvers} ov)`;
             if (s2 && !s2.includes("(") && defaultMaxOvers) s2 += ` (${defaultMaxOvers} ov)`;
 
@@ -429,6 +456,13 @@ app.get('/api/fetch-score', async (req, res) => {
               targetEq = `${chasingTeam} need ${minScore.remRuns} runs in ${minScore.remBalls} balls`;
             }
 
+            // టైమ్‌జోన్ ఫార్మాట్ (IST)
+            const now = new Date();
+            const formattedTime = formatFinishedTimeWithZone(now, clientTz);
+            const formattedNotice = isFinished 
+              ? `${statusText} • Finished on ${formattedTime}`
+              : (targetEq || statusText);
+
             payload = {
               success: true,
               source: "cricbuzz",
@@ -440,12 +474,12 @@ app.get('/api/fetch-score', async (req, res) => {
               t2_img: getTeamFlagUrl(outT2),
               t1_score: s1,
               t2_score: s2,
-              statusNotice: statusText,
+              statusNotice: formattedNotice,
               dynamicBadge: dynamicBadge,
               targetEquation: targetEq || statusText,
               isLive: Boolean(isLive),
               isFinished: Boolean(isFinished),
-              calculatedFinishedDate: isFinished ? new Date().toISOString() : null
+              calculatedFinishedDate: isFinished ? formattedTime : null
             };
           }
         }
@@ -507,6 +541,12 @@ app.get('/api/fetch-score', async (req, res) => {
             const isFinished = statusText.toLowerCase().includes("won by") || statusText.toLowerCase().includes("beat") || (s1 && s2);
             const isLive = !isFinished && statusText.toLowerCase().includes("need");
 
+            const now = new Date();
+            const formattedTime = formatFinishedTimeWithZone(now, clientTz);
+            const formattedNotice = isFinished 
+              ? `${statusText || 'New Zealand won by 87 runs'} • Finished on ${formattedTime}`
+              : statusText;
+
             payload = {
               success: true,
               source: "cricbuzz",
@@ -518,12 +558,12 @@ app.get('/api/fetch-score', async (req, res) => {
               t2_img: getTeamFlagUrl(outT2),
               t1_score: s1,
               t2_score: s2,
-              statusNotice: statusText || "New Zealand won by 87 runs",
+              statusNotice: formattedNotice,
               dynamicBadge: isFinished ? "MATCH ENDED" : (isLive ? "2ND INNINGS" : "LIVE"),
               targetEquation: statusText || payload?.targetEquation || "",
               isLive: Boolean(isLive),
               isFinished: Boolean(isFinished),
-              calculatedFinishedDate: isFinished ? new Date().toISOString() : null
+              calculatedFinishedDate: isFinished ? formattedTime : null
             };
           }
         } catch (e) {}
@@ -573,6 +613,8 @@ app.get('/api/fetch-score', async (req, res) => {
             targetEq = d.status;
           }
 
+          const now = new Date();
+          const formattedTime = formatFinishedTimeWithZone(now, clientTz);
           return res.json({
             success: true,
             source: "cricapi",
@@ -584,12 +626,12 @@ app.get('/api/fetch-score', async (req, res) => {
             t2_img: getTeamFlagUrl(targetT2),
             t1_score: s1,
             t2_score: s2,
-            statusNotice: d.status || "",
+            statusNotice: isFinished ? `${d.status} • Finished on ${formattedTime}` : (d.status || ""),
             dynamicBadge: badge,
             targetEquation: targetEq || d.status || "",
             isLive: Boolean(isLive),
             isFinished: Boolean(isFinished),
-            calculatedFinishedDate: isFinished ? new Date().toISOString() : null
+            calculatedFinishedDate: isFinished ? formattedTime : null
           });
         }
       }
