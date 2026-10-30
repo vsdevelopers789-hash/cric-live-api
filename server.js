@@ -4,7 +4,7 @@ const cors = require('cors');
 const app = express();
 app.use(cors());
 
-// 1. అఫీషియల్ CricAPI / High-Res Flag CDN బేస్ & మ్యాపింగ్
+// 1. అఫీషియల్ CricAPI / High-Res Flag CDN బేస్ & డైరెక్ట్ మ్యాపింగ్
 const CRICAPI_FLAG_CDN_BASE = "https://cdorg.b-cdn.net/flags";
 
 const DIRECT_COUNTRY_CDN_MAP = {
@@ -51,9 +51,9 @@ function getTeamFlagUrl(teamName) {
   return "";
 }
 
-// 2. విస్తరించిన యూనివర్సల్ టీమ్ మ్యాపింగ్ డిక్షనరీ (TEAM_ALIASES)
+// 2. సమగ్ర టీమ్ మ్యాపింగ్ డిక్షనరీ (అన్ని లీగ్‌లు & జట్లు కలిపి)
 const TEAM_ALIASES = {
-  // International
+  // 1. Full Member International Men & Women Teams
   "ind": ["india", "ind", "indw", "indiaw", "indiawomen", "teamindia", "indians", "bcci"],
   "zim": ["zimbabwe", "zim", "zimw", "zimbabwew", "zimbabwewomen", "chevrons"],
   "aus": ["australia", "aus", "ausw", "australiaw", "australiawomen", "aussie", "aussies"],
@@ -66,6 +66,8 @@ const TEAM_ALIASES = {
   "ban": ["bangladesh", "ban", "bd", "banw", "bangladeshw", "tigers"],
   "afg": ["afghanistan", "afg", "afghan"],
   "ire": ["ireland", "ire", "irew", "irelandw"],
+
+  // 2. Associate & ICC Tournament Teams
   "usa": ["unitedstates", "usa", "unitedstatesofamerica", "us"],
   "nep": ["nepal", "nep", "rhinos"],
   "ned": ["netherlands", "ned", "holland", "dutch"],
@@ -83,7 +85,7 @@ const TEAM_ALIASES = {
   "kuw": ["kuwait", "kuw"],
   "qat": ["qatar", "qat"],
 
-  // IPL
+  // 3. Indian Premier League (IPL)
   "csk": ["chennaisuperkings", "csk", "chennai"],
   "rcb": ["royalchallengersbengaluru", "royalchallengersbangalore", "rcb", "bengaluru", "bangalore"],
   "mi":  ["mumbaiindians", "mi", "mumbai"],
@@ -95,14 +97,14 @@ const TEAM_ALIASES = {
   "gt":  ["gujarattitans", "gt", "gujarat"],
   "lsg": ["lucknowsupergiants", "lsg", "lucknow"],
 
-  // WPL
+  // 4. Women's Premier League (WPL)
   "dcw": ["delhicapitalswomen", "dcwomen", "dcw"],
   "miw": ["mumbaiindianswomen", "miwomen", "miw"],
   "rcbw":["royalchallengersbengaluruwomen", "rcbwomen", "rcbw"],
   "ggw": ["gujaratgiants", "gujaratgiantswomen", "gg", "ggw"],
   "upw": ["upwarriorz", "upwarriorzwomen", "upw"],
 
-  // PSL
+  // 5. Pakistan Super League (PSL)
   "lq":  ["lahoreqalandars", "lq", "lahore"],
   "kk":  ["karachikings", "kk", "karachi"],
   "islu":["islamabadunited", "iu", "islu", "islamabad"],
@@ -110,7 +112,7 @@ const TEAM_ALIASES = {
   "ms":  ["multansultans", "ms", "multan"],
   "qg":  ["quettagladiators", "qg", "quetta"],
 
-  // BBL
+  // 6. Big Bash League (BBL)
   "ps":  ["perthscorchers", "ps", "scorchers"],
   "ss":  ["sydneysixers", "ss", "sixers"],
   "msb": ["melbournestars", "stars"],
@@ -121,7 +123,7 @@ const TEAM_ALIASES = {
   "st":  ["sydneythunder", "thunder"]
 };
 
-// 3. టీమ్ మ్యాచింగ్ ఫంక్షన్ (షార్ట్‌కట్ & ఫుల్ నేమ్‌ను మ్యాచ్ చేస్తుంది)
+// 3. సమగ్ర టీమ్ మ్యాచింగ్ ఫంక్షన్
 function isSameTeam(nameA, nameB) {
   if (!nameA || !nameB) return false;
   const a = String(nameA).toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -138,7 +140,7 @@ function isSameTeam(nameA, nameB) {
   return false;
 }
 
-// 4. లైవ్ స్కోర్ ఎండ్‌పాయింట్
+// 4. యూనివర్సల్ లైవ్ స్కోర్ హ్యాండ్లర్
 app.get('/api/fetch-score', async (req, res) => {
   const target = req.query.id || "";
   const apiKey = req.query.apikey || "";
@@ -146,11 +148,13 @@ app.get('/api/fetch-score', async (req, res) => {
   const t2Query = (req.query.t2 || "").trim();
 
   if (!target) {
-    return res.status(400).json({ success: false, message: "Missing id/url" });
+    return res.status(400).json({ success: false, message: "Missing id/url parameter" });
   }
 
   try {
-    // A. ESPN / CRICINFO HANDLER
+    // -------------------------------------------------------------
+    // A. ESPN CRICINFO / ESPN.IN (Strict Match ID Separation)
+    // -------------------------------------------------------------
     if (target.includes("cricinfo.com") || target.includes("espn.in") || target.includes("espncricinfo.com")) {
       let espnSeriesId = "";
       let espnMatchId = "";
@@ -240,103 +244,203 @@ app.get('/api/fetch-score', async (req, res) => {
       }
     }
 
-    // B. CRICBUZZ HANDLER (All-out Wickets, Overs, Need Runs & Result)
+    // -------------------------------------------------------------
+    // B. CRICBUZZ HANDLER (వికెట్లు, ఓవర్లు, ఫ్లాగ్స్, Need runs / Result)
+    // -------------------------------------------------------------
     if (target.includes("cricbuzz.com") || /^\d{5,7}$/.test(target)) {
-      let cbMatchId = target.match(/\d{5,7}/)?.[0] || target;
-      const cbUrl = `https://www.cricbuzz.com/api/cricket-match/live-scores/${cbMatchId}`;
+      let cbMatchId = target;
+      const m = target.match(/(?:cricket-scores|live-cricket-scores|cricket-match-highlights)\/(\d+)/i) || target.match(/\/(\d+)/) || target.match(/\d{5,7}/);
+      if (m && m[1]) cbMatchId = m[1];
+      else if (m && m[0]) cbMatchId = m[0];
 
-      const cbRes = await fetch(cbUrl, {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36",
-          "Accept": "application/json",
-          "Referer": "https://www.cricbuzz.com/"
-        }
-      });
+      let payload = null;
 
-      if (cbRes.ok) {
-        const cbJson = await cbRes.json();
-        if (cbJson && cbJson.matchHeader) {
-          const mHeader = cbJson.matchHeader || {};
-          const minScore = cbJson.miniscore || {};
-          const statusText = mHeader.status || cbJson.status || "";
-          const state = (mHeader.state || "").toLowerCase();
+      // 1. JSON API
+      const endpoints = [
+        `https://www.cricbuzz.com/api/cricket-match/commentary/${cbMatchId}`,
+        `https://www.cricbuzz.com/api/cricket-match/live-scores/${cbMatchId}`
+      ];
 
-          const t1Name = mHeader.team1?.name || mHeader.team1?.sName || "";
-          const t2Name = mHeader.team2?.name || mHeader.team2?.sName || "";
-          const outT1 = t1Query || t1Name;
-          const outT2 = t2Query || t2Name;
-
-          let s1 = "", s2 = "";
-          const inningsList = minScore.matchScoreDetails?.inningsScoreList || [];
-
-          function buildExactScoreStr(sc) {
-            const runs = sc.score !== undefined ? sc.score : (sc.runs !== undefined ? sc.runs : 0);
-            let wkts = "";
-            if (sc.wickets !== undefined) wkts = `/${sc.wickets}`;
-            else if (sc.wkts !== undefined) wkts = `/${sc.wkts}`;
-            else if (sc.isAllOut) wkts = `/10`;
-
-            let rawOv = sc.overs ?? sc.ovrs ?? sc.totalOvers ?? sc.maxOvers ?? '';
-            let oversStr = (rawOv !== '' && rawOv !== undefined) ? ` (${rawOv} ov)` : '';
-            return `${runs}${wkts}${oversStr}`.trim();
-          }
-
-          inningsList.forEach(sc => {
-            const scStr = buildExactScoreStr(sc);
-            const batName = (sc.batTeamId === mHeader.team1?.id) ? t1Name : ((sc.batTeamId === mHeader.team2?.id) ? t2Name : "");
-
-            if (isSameTeam(outT1, batName)) s1 = scStr;
-            else if (isSameTeam(outT2, batName)) s2 = scStr;
+      for (const ep of endpoints) {
+        try {
+          const resp = await fetch(ep, {
+            headers: {
+              "User-Agent": "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36",
+              "Accept": "application/json, text/plain, */*",
+              "Referer": "https://www.cricbuzz.com/"
+            }
           });
 
-          if (!s1 && !s2 && inningsList.length > 0) {
-            s1 = buildExactScoreStr(inningsList[0]);
-            if (inningsList[1]) s2 = buildExactScoreStr(inningsList[1]);
+          if (resp.ok) {
+            const cbJson = await resp.json();
+            if (cbJson && cbJson.matchHeader) {
+              const mHeader = cbJson.matchHeader || {};
+              const minScore = cbJson.miniscore || {};
+              const statusText = mHeader.status || cbJson.status || "";
+              const state = (mHeader.state || "").toLowerCase();
+
+              const t1Name = mHeader.team1?.name || mHeader.team1?.sName || "";
+              const t2Name = mHeader.team2?.name || mHeader.team2?.sName || "";
+              const outT1 = t1Query || t1Name;
+              const outT2 = t2Query || t2Name;
+
+              let s1 = "", s2 = "";
+              const inningsList = minScore.matchScoreDetails?.inningsScoreList || [];
+
+              function buildExactScoreStr(sc) {
+                const runs = sc.score !== undefined ? sc.score : (sc.runs !== undefined ? sc.runs : 0);
+                let wkts = "";
+                if (sc.wickets !== undefined) wkts = `/${sc.wickets}`;
+                else if (sc.wkts !== undefined) wkts = `/${sc.wkts}`;
+                else if (sc.isAllOut) wkts = `/10`;
+
+                let rawOv = sc.overs ?? sc.ovrs ?? sc.totalOvers ?? sc.maxOvers ?? '';
+                let oversStr = (rawOv !== '' && rawOv !== undefined) ? ` (${rawOv} ov)` : '';
+                return `${runs}${wkts}${oversStr}`.trim();
+              }
+
+              inningsList.forEach(sc => {
+                const scStr = buildExactScoreStr(sc);
+                const batName = (sc.batTeamId === mHeader.team1?.id) ? t1Name : ((sc.batTeamId === mHeader.team2?.id) ? t2Name : "");
+
+                if (isSameTeam(outT1, batName)) s1 = scStr;
+                else if (isSameTeam(outT2, batName)) s2 = scStr;
+              });
+
+              if (!s1 && !s2 && inningsList.length > 0) {
+                s1 = buildExactScoreStr(inningsList[0]);
+                if (inningsList[1]) s2 = buildExactScoreStr(inningsList[1]);
+              }
+
+              const formatStr = (mHeader.matchFormat || "").toLowerCase();
+              const defaultOvers = formatStr.includes("t20") ? " (20 ov)" : (formatStr.includes("odi") ? " (50 ov)" : "");
+              if (s1 && !s1.includes("(") && defaultOvers) s1 += defaultOvers;
+              if (s2 && !s2.includes("(") && defaultOvers) s2 += defaultOvers;
+
+              const isFinished = state === "complete" || statusText.toLowerCase().includes("won by") || statusText.toLowerCase().includes("beat");
+              const isLive = !isFinished && (state === "inprogress" || state === "innings break");
+
+              let dynamicBadge = isFinished ? "MATCH ENDED" : (statusText.toLowerCase().includes("innings break") ? "INNINGS BREAK" : (inningsList.length >= 2 ? "2ND INNINGS" : "1ST INNINGS"));
+
+              let targetEq = "";
+              if (!isFinished && minScore.remRuns && minScore.remBalls) {
+                const chasingTeam = minScore.batTeam?.teamName || outT1;
+                targetEq = `${chasingTeam} need ${minScore.remRuns} runs in ${minScore.remBalls} balls`;
+              } else if (!isFinished && minScore.remRuns) {
+                targetEq = `Need ${minScore.remRuns} runs`;
+              } else if (statusText) {
+                targetEq = statusText;
+              }
+
+              payload = {
+                success: true,
+                source: "cricbuzz",
+                matchId: cbMatchId,
+                series: mHeader.seriesName || "",
+                t1: outT1,
+                t2: outT2,
+                t1_img: getTeamFlagUrl(outT1),
+                t2_img: getTeamFlagUrl(outT2),
+                t1_score: s1,
+                t2_score: s2,
+                statusNotice: targetEq || statusText,
+                dynamicBadge: dynamicBadge,
+                targetEquation: targetEq || statusText,
+                isLive: isLive,
+                isFinished: isFinished,
+                calculatedFinishedDate: isFinished ? new Date().toISOString() : null
+              };
+              break;
+            }
           }
+        } catch (e) {}
+      }
 
-          const formatStr = (mHeader.matchFormat || "").toLowerCase();
-          const defaultOvers = formatStr.includes("t20") ? " (20 ov)" : (formatStr.includes("odi") ? " (50 ov)" : "");
-          if (s1 && !s1.includes("(") && defaultOvers) s1 += defaultOvers;
-          if (s2 && !s2.includes("(") && defaultOvers) s2 += defaultOvers;
-
-          const isFinished = state === "complete" || statusText.toLowerCase().includes("won by") || statusText.toLowerCase().includes("beat");
-          const isLive = !isFinished && (state === "inprogress" || state === "innings break");
-
-          let dynamicBadge = isFinished ? "MATCH ENDED" : (statusText.toLowerCase().includes("innings break") ? "INNINGS BREAK" : (inningsList.length >= 2 ? "2ND INNINGS" : "1ST INNINGS"));
-
-          let targetEq = "";
-          if (!isFinished && minScore.remRuns && minScore.remBalls) {
-            const chasingTeam = minScore.batTeam?.teamName || outT1;
-            targetEq = `${chasingTeam} need ${minScore.remRuns} runs in ${minScore.remBalls} balls`;
-          } else if (!isFinished && minScore.remRuns) {
-            targetEq = `Need ${minScore.remRuns} runs`;
-          } else if (statusText) {
-            targetEq = statusText;
-          }
-
-          return res.json({
-            success: true,
-            source: "cricbuzz",
-            matchId: cbMatchId,
-            series: mHeader.seriesName || "",
-            t1: outT1,
-            t2: outT2,
-            t1_img: getTeamFlagUrl(outT1),
-            t2_img: getTeamFlagUrl(outT2),
-            t1_score: s1,
-            t2_score: s2,
-            statusNotice: targetEq || statusText,
-            dynamicBadge: dynamicBadge,
-            targetEquation: targetEq || statusText,
-            isLive: isLive,
-            isFinished: isFinished,
-            calculatedFinishedDate: isFinished ? new Date().toISOString() : null
+      // 2. HTML Scraper ఫాల్‌బ్యాక్
+      if (!payload) {
+        try {
+          const targetWebUrl = target.includes("http") ? target : `https://www.cricbuzz.com/live-cricket-scores/${cbMatchId}`;
+          const htmlRes = await fetch(targetWebUrl, {
+            headers: {
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+              "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            }
           });
-        }
+
+          if (htmlRes.ok) {
+            let html = await htmlRes.text();
+            let statusText = "";
+            const stMatch = html.match(/<div[^>]*class="[^"]*(?:cb-min-stts|cb-text-complete|cb-text-live|cb-text-inprogress)[^"]*"[^>]*>([^<]+)<\/div>/i);
+            if (stMatch && stMatch[1]) statusText = stMatch[1].trim();
+
+            const needRunsMatch = html.match(/([A-Za-z\s]+need\s+[0-9]+\s+runs(?:[^\n<]*))/i);
+            if (needRunsMatch && needRunsMatch[1]) statusText = needRunsMatch[1].trim();
+
+            let extractedScores = [];
+            const cleanScoreRegex = /([A-Z]{2,6}(?:-W)?)\s+([0-9]{1,4}(?:\/[0-9]{1,2})?)\s*(?:\(([\d\.]+(?:\s*(?:ov|ovs))?)\))?/gi;
+            let mEntry;
+
+            while ((mEntry = cleanScoreRegex.exec(html)) !== null) {
+              const teamKey = mEntry[1].trim();
+              const scoreVal = mEntry[2].trim().replace('-', '/');
+              let rawOv = mEntry[3] ? mEntry[3].replace(/ovs?/i, '').trim() : '';
+              const oversVal = rawOv ? ` (${rawOv} ov)` : '';
+              const rawRuns = parseInt(scoreVal.split('/')[0]);
+              if (rawRuns < 1000 && (rawRuns >= 10 || scoreVal.includes('/'))) {
+                if (!extractedScores.some(x => x.name === teamKey)) {
+                  extractedScores.push({ name: teamKey, score: `${scoreVal}${oversVal}`.trim() });
+                }
+              }
+            }
+
+            let s1 = "", s2 = "";
+            let outT1 = t1Query || (extractedScores[0] ? extractedScores[0].name : "Team 1");
+            let outT2 = t2Query || (extractedScores[1] ? extractedScores[1].name : "Team 2");
+
+            extractedScores.forEach(item => {
+              if (isSameTeam(outT1, item.name)) s1 = item.score;
+              else if (isSameTeam(outT2, item.name)) s2 = item.score;
+            });
+
+            if (!s1 && !s2 && extractedScores.length > 0) {
+              s1 = extractedScores[0] ? extractedScores[0].score : "";
+              s2 = extractedScores[1] ? extractedScores[1].score : "";
+            }
+
+            const statusLower = statusText.toLowerCase();
+            const isFinished = statusLower.includes("won by") || statusLower.includes("beat");
+            const isLive = !isFinished && (statusLower.includes("need") || statusLower.includes("trail") || statusLower.includes("lead"));
+
+            payload = {
+              success: true,
+              source: "cricbuzz",
+              matchId: cbMatchId,
+              series: "",
+              t1: outT1,
+              t2: outT2,
+              t1_img: getTeamFlagUrl(outT1),
+              t2_img: getTeamFlagUrl(outT2),
+              t1_score: s1,
+              t2_score: s2,
+              statusNotice: statusText,
+              dynamicBadge: isFinished ? "MATCH ENDED" : (s1 && s2 ? "2ND INNINGS" : "1ST INNINGS"),
+              targetEquation: statusText,
+              isLive: isLive,
+              isFinished: isFinished,
+              calculatedFinishedDate: isFinished ? new Date().toISOString() : null
+            };
+          }
+        } catch (e) {}
+      }
+
+      if (payload) {
+        return res.json(payload);
       }
     }
 
-    // C. CRICAPI HANDLER
+    // -------------------------------------------------------------
+    // C. CRICAPI HANDLER (Flag CDN & Exact Scores)
+    // -------------------------------------------------------------
     if (apiKey) {
       const cricUrl = `https://api.cricapi.com/v1/match_info?apikey=${encodeURIComponent(apiKey)}&id=${encodeURIComponent(target)}`;
       const cricRes = await fetch(cricUrl);
