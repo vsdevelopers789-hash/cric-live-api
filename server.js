@@ -220,7 +220,7 @@ function extractSeriesFromUrlSlug(urlStr) {
 }
 
 // =========================================================================
-// 3. COMPLETE LIVE SCORE ROUTE (CRICBUZZ, ESPN CRICINFO & CRICAPI)
+// 3. COMPLETE LIVE SCORE ROUTE (ACCURATE LIVE SCORES FIX)
 // =========================================================================
 app.get('/api/fetch-score', async (req, res) => {
   const target = req.query.id || "";
@@ -326,7 +326,7 @@ app.get('/api/fetch-score', async (req, res) => {
     }
 
     // -------------------------------------------------------------
-    // B. CRICBUZZ HANDLER (Accurate Batting Scores, Wickets & Overs Fix)
+    // B. CRICBUZZ HANDLER (Accurate Batting Scores & Balls Fix)
     // -------------------------------------------------------------
     if (target.includes("cricbuzz.com") || /^\d{5,7}$/.test(target)) {
       let cbMatchId = target;
@@ -383,7 +383,7 @@ app.get('/api/fetch-score', async (req, res) => {
                 return `${runs}${wkts}${oversStr}`.trim();
               }
 
-              // ఇన్నింగ్స్ లిస్ట్ నుండి టీమ్ స్కోర్లు తీసుకోవడం
+              // 1. ఇన్నింగ్స్ లిస్ట్ నుండి టీమ్ స్కోర్లు తీసుకోవడం
               inningsList.forEach(sc => {
                 const scStr = buildExactScoreStr(sc);
                 const batName = (sc.batTeamId === mHeader.team1?.id) ? t1Name : ((sc.batTeamId === mHeader.team2?.id) ? t2Name : "");
@@ -392,12 +392,46 @@ app.get('/api/fetch-score', async (req, res) => {
                 else if (isSameTeam(outT2, batName)) s2 = scStr;
               });
 
-              // లైవ్ బ్యాటింగ్ టీమ్ కరెంట్ స్కోరు (miniscore batsManDetails / currentInnings) తో మ్యాచ్ చేయడం
-              if (minScore.batTeamDetails) {
-                const liveBatScore = `${minScore.batTeamDetails.batTeamScore || 0}${minScore.batTeamDetails.batTeamWickets !== undefined ? '/' + minScore.batTeamDetails.batTeamWickets : ''} (${minScore.overs || ''} ov)`.trim();
-                const curBatTeamName = minScore.batTeamDetails.batTeamShortName || minScore.batTeamDetails.batTeamName || "";
-                if (isSameTeam(outT1, curBatTeamName)) s1 = liveBatScore;
-                else if (isSameTeam(outT2, curBatTeamName)) s2 = liveBatScore;
+              // 2. miniscore batTeam / batTeamDetails నుండి కరెంట్ లైవ్ స్కోర్
+              const liveBatTeam = minScore.batTeam || minScore.batTeamDetails || {};
+              const curBatTeamName = liveBatTeam.teamName || liveBatTeam.batTeamShortName || liveBatTeam.batTeamName || "";
+              const liveRuns = liveBatTeam.score !== undefined ? liveBatTeam.score : liveBatTeam.batTeamScore;
+              const liveWkts = liveBatTeam.wickets !== undefined ? liveBatTeam.wickets : liveBatTeam.batTeamWickets;
+              const liveOvers = minScore.overs || liveBatTeam.overs;
+
+              if (liveRuns !== undefined && liveRuns !== null) {
+                const liveWktsStr = liveWkts !== undefined ? `/${liveWkts}` : '';
+                const liveOversStr = liveOvers ? ` (${liveOvers} ov)` : '';
+                const exactLiveScore = `${liveRuns}${liveWktsStr}${liveOversStr}`.trim();
+
+                if (isSameTeam(outT1, curBatTeamName)) s1 = exactLiveScore;
+                else if (isSameTeam(outT2, curBatTeamName)) s2 = exactLiveScore;
+              }
+
+              // 3. టార్గెట్ రన్స్ ఉన్నప్పుడు తప్పుడు బాల్స్ సంఖ్య పడకుండా ఖచ్చితమైన స్కోరు ధృవీకరణ
+              let targetEq = "";
+              if (minScore.remRuns && minScore.remBalls) {
+                const chasingTeam = minScore.batTeam?.teamName || outT1;
+                targetEq = `${chasingTeam} need ${minScore.remRuns} runs in ${minScore.remBalls} balls`;
+
+                // ఒకవేళ s1 లో స్కోరు తప్పుగా బంతుల సంఖ్య పడి ఉంటే (ఉదా: 68 లేదా 71)
+                const firstInnScore = inningsList[0] ? (inningsList[0].score || inningsList[0].runs || 0) : 0;
+                if (firstInnScore > 0) {
+                  const targetRuns = firstInnScore + 1;
+                  const calculatedCurrentScore = targetRuns - minScore.remRuns;
+                  const currentWkts = (liveWkts !== undefined && liveWkts !== null) ? `/${liveWkts}` : (s1.includes('/') ? `/${s1.split('/')[1].split(' ')[0]}` : '');
+                  const currentOvers = liveOvers ? ` (${liveOvers} ov)` : '';
+
+                  if (isSameTeam(outT1, chasingTeam)) {
+                    s1 = `${calculatedCurrentScore}${currentWkts}${currentOvers}`.trim();
+                  } else if (isSameTeam(outT2, chasingTeam)) {
+                    s2 = `${calculatedCurrentScore}${currentWkts}${currentOvers}`.trim();
+                  }
+                }
+              } else if (minScore.remRuns) {
+                targetEq = `Need ${minScore.remRuns} runs`;
+              } else if (statusText) {
+                targetEq = statusText;
               }
 
               if (!s1 && !s2 && inningsList.length > 0) {
@@ -414,16 +448,6 @@ app.get('/api/fetch-score', async (req, res) => {
               const isLive = !isFinished && (state === "inprogress" || state === "innings break");
 
               let dynamicBadge = isFinished ? "MATCH ENDED" : (statusText.toLowerCase().includes("innings break") ? "INNINGS BREAK" : (inningsList.length >= 2 ? "2ND INNINGS" : "1ST INNINGS"));
-
-              let targetEq = "";
-              if (!isFinished && minScore.remRuns && minScore.remBalls) {
-                const chasingTeam = minScore.batTeam?.teamName || outT1;
-                targetEq = `${chasingTeam} need ${minScore.remRuns} runs in ${minScore.remBalls} balls`;
-              } else if (!isFinished && minScore.remRuns) {
-                targetEq = `Need ${minScore.remRuns} runs`;
-              } else if (statusText) {
-                targetEq = statusText;
-              }
 
               payload = {
                 success: true,
