@@ -66,7 +66,6 @@ function getTeamFlagUrl(teamName) {
 // 2. EXTENDED UNIVERSAL TEAM ALIASES (FULL MEMBERS, ASSOCIATES & ALL LEAGUES)
 // =========================================================================
 const TEAM_ALIASES = {
-  // 1. Full Member International (Men & Women)
   "ind": ["india", "ind", "indw", "indiaw", "indiawomen", "teamindia", "indians", "bcci"],
   "zim": ["zimbabwe", "zim", "zimw", "zimbabwew", "zimbabwewomen", "chevrons"],
   "aus": ["australia", "aus", "ausw", "australiaw", "australiawomen", "aussie", "aussies"],
@@ -79,8 +78,6 @@ const TEAM_ALIASES = {
   "ban": ["bangladesh", "ban", "bd", "banw", "bangladeshw", "tigers"],
   "afg": ["afghanistan", "afg", "afghan"],
   "ire": ["ireland", "ire", "irew", "irelandw"],
-
-  // 2. Associate & ICC Tournament Teams
   "usa": ["unitedstates", "usa", "unitedstatesofamerica", "us"],
   "nep": ["nepal", "nep", "rhinos"],
   "ned": ["netherlands", "ned", "holland", "dutch"],
@@ -103,8 +100,6 @@ const TEAM_ALIASES = {
   "ber": ["bermuda", "ber"],
   "den": ["denmark", "den"],
   "tha": ["thailand", "thai", "thaiw"],
-
-  // 3. Indian Premier League (IPL)
   "csk": ["chennaisuperkings", "csk", "chennai"],
   "rcb": ["royalchallengersbengaluru", "royalchallengersbangalore", "rcb", "bengaluru", "bangalore"],
   "mi":  ["mumbaiindians", "mi", "mumbai"],
@@ -115,23 +110,17 @@ const TEAM_ALIASES = {
   "pbks":["punjabkings", "pbks", "punjab", "kxip"],
   "gt":  ["gujarattitans", "gt", "gujarat"],
   "lsg": ["lucknowsupergiants", "lsg", "lucknow"],
-
-  // 4. Women's Premier League (WPL)
   "dcw": ["delhicapitalswomen", "dcwomen", "dcw"],
   "miw": ["mumbaiindianswomen", "miwomen", "miw"],
   "rcbw":["royalchallengersbengaluruwomen", "rcbwomen", "rcbw"],
   "ggw": ["gujaratgiants", "gujaratgiantswomen", "gg", "ggw"],
   "upw": ["upwarriorz", "upwarriorzwomen", "upw"],
-
-  // 5. Pakistan Super League (PSL)
   "lq":  ["lahoreqalandars", "lq", "lahore"],
   "kk":  ["karachikings", "kk", "karachi"],
   "islu":["islamabadunited", "iu", "islu", "islamabad"],
   "pz":  ["peshawarzalmi", "pz", "peshawar"],
   "ms":  ["multansultans", "ms", "multan"],
   "qg":  ["quettagladiators", "qg", "quetta"],
-
-  // 6. Big Bash League (BBL & WBBL)
   "ps":  ["perthscorchers", "ps", "scorchers"],
   "ss":  ["sydneysixers", "ss", "sixers"],
   "msb": ["melbournestars", "stars"],
@@ -140,40 +129,30 @@ const TEAM_ALIASES = {
   "as":  ["adelaidestrikers", "strikers"],
   "hh":  ["hobarthurricanes", "hurricanes"],
   "st":  ["sydneythunder", "thunder"],
-
-  // 7. SA20 (South Africa T20)
   "sec": ["sunriserseasterncape", "sec", "sunrisers"],
   "pr":  ["paarlroyals", "pr", "paarl"],
   "mi-ct": ["micapetown", "mict", "capetown"],
   "joh": ["joburgsuperkings", "jsk", "joburg"],
   "dsg": ["durbanssupergiants", "dsg", "durban"],
   "pc":  ["pretoriacapitals", "pc", "pretoria"],
-
-  // 8. Caribbean Premier League (CPL & WCPL)
   "tkr": ["trinbagoknightriders", "tkr", "trinbago"],
   "br":  ["barbadosroyals", "br", "barbados"],
   "gaw": ["guyanaamazonwarriors", "gaw", "guyana", "warriors"],
   "sknp":["stkittsnevispatriots", "sknp", "patriots"],
   "slk": ["stluciakings", "slk", "stlucia"],
   "abf": ["antiguabarbuda falcons", "falcons", "abf"],
-
-  // 9. Major League Cricket (MLC - USA)
   "miny": ["minewyork", "miny", "newyork"],
   "tsr":  ["texassuperkings", "tsk", "texas"],
   "seo":  ["seattleorcas", "orcas", "seattle"],
   "wfr":  ["washingtonfreedom", "freedom", "washington"],
   "lar":  ["losangelesknightriders", "lakr", "losangeles"],
   "sf":   ["sanfranciscounicorns", "unicorns", "sanfrancisco"],
-
-  // 10. International League T20 (ILT20 - UAE)
   "miev": ["miemirates", "miev", "emirates"],
   "adkr": ["abudhabiknightriders", "adkr", "abudhabi"],
   "dv":   ["desertvipers", "vipers"],
   "gg-ae":["gulfgiants", "giants"],
   "sw":   ["sharjahwarriors", "warriors"],
   "dc-ae":["dubai capitals", "dubaicapitals"],
-
-  // 11. The Hundred (England)
   "bp":  ["birminghamphoenix", "phoenix"],
   "ls":  ["londonspirit", "spirit"],
   "mo":  ["manchesteroriginals", "originals"],
@@ -182,8 +161,6 @@ const TEAM_ALIASES = {
   "sb":  ["southernbrave", "brave"],
   "tr":  ["trentrockets", "rockets"],
   "wf":  ["welshfire", "fire"],
-
-  // 12. Super Smash (New Zealand)
   "auk": ["aucklandaces", "auckland", "aces"],
   "can-nz": ["canterburykings", "canterbury"],
   "cd":  ["centralstags", "stags"],
@@ -229,32 +206,65 @@ function fmtInning(sc, defaultMaxOvers) {
   return `${runs}${wkts}${oversStr}`.trim();
 }
 
-// -------------------------------------------------------------
-// HELPER: START DATE + 3 HOURS CALCULATOR
-// -------------------------------------------------------------
-function calculatePlus3HoursIso(startDateVal) {
-  if (!startDateVal) return new Date().toISOString();
-  try {
-    let startEpoch = 0;
+// =========================================================================
+// MATCH DURATION + 3 HOURS DYNAMIC ENGINE
+// =========================================================================
+function calculateMatchTimings(startDateVal, matchFormatStr, isFinished) {
+  let startEpoch = 0;
+  if (startDateVal) {
     if (typeof startDateVal === 'number' || /^\d{10,13}$/.test(String(startDateVal).trim())) {
       startEpoch = parseInt(String(startDateVal).trim());
       if (String(startEpoch).length === 10) startEpoch *= 1000;
     } else {
       startEpoch = new Date(startDateVal).getTime();
     }
-
-    if (!startEpoch || isNaN(startEpoch)) return new Date().toISOString();
-
-    // ప్రారంభ సమయానికి ఖచ్చితంగా 3 గంటలు జోడించడం (+3 Hours = 3 * 3600 * 1000 ms)
-    const threeHoursMs = 3 * 60 * 60 * 1000;
-    return new Date(startEpoch + threeHoursMs).toISOString();
-  } catch (e) {
-    return new Date().toISOString();
   }
+
+  // startEpoch లభించకపోతే ప్రస్తుత సమయం తీసుకోవడం
+  if (!startEpoch || isNaN(startEpoch)) {
+    const now = Date.now();
+    return {
+      startTimeIso: new Date(now).toISOString(),
+      calculatedFinishedIso: isFinished ? new Date(now).toISOString() : null
+    };
+  }
+
+  const startTimeIso = new Date(startEpoch).toISOString();
+
+  // మ్యాచ్ కేవలం Upcoming లో ఉంటే ముగింపు సమయం అవసరం లేదు
+  if (!isFinished) {
+    return {
+      startTimeIso: startTimeIso,
+      calculatedFinishedIso: null
+    };
+  }
+
+  // 1. మ్యాచ్ ఫార్మాట్ ఆధారంగా ఆడే సమయం (Playing Duration)
+  const fmt = String(matchFormatStr || "").toLowerCase();
+  let playingDurationMs = 3.75 * 60 * 60 * 1000; // T20 డిఫాల్ట్: 3 గంటల 45 నిమిషాలు
+  if (fmt.includes("odi")) {
+    playingDurationMs = 8 * 60 * 60 * 1000; // ODI: 8 గంటలు
+  } else if (fmt.includes("test")) {
+    playingDurationMs = 7 * 60 * 60 * 1000; // Test: 7 గంటలు
+  } else if (fmt.includes("t10")) {
+    playingDurationMs = 1.75 * 60 * 60 * 1000; // T10: 1 గంట 45 నిమిషాలు
+  }
+
+  // 2. మ్యాచ్ Finished అయినప్పుడు అదనంగా జోడించే 3 గంటలు
+  const extraThreeHoursMs = 3 * 60 * 60 * 1000;
+
+  // ప్రారంభ సమయం + ఆడిన సమయం + అదనపు 3 గంటలు
+  const totalFinishedEpoch = startEpoch + playingDurationMs + extraThreeHoursMs;
+  const calculatedFinishedIso = new Date(totalFinishedEpoch).toISOString();
+
+  return {
+    startTimeIso: startTimeIso,
+    calculatedFinishedIso: calculatedFinishedIso
+  };
 }
 
 // =========================================================================
-// 3. COMPLETE LIVE SCORE ROUTE (PURE ISO DATE & STRICT BOOLEAN)
+// 3. COMPLETE LIVE SCORE ROUTE
 // =========================================================================
 app.get('/api/fetch-score', async (req, res) => {
   const target = req.query.id || "";
@@ -334,8 +344,7 @@ app.get('/api/fetch-score', async (req, res) => {
                 const outT1 = t1Query || t1Name;
                 const outT2 = t2Query || t2Name;
 
-                // మ్యాచ్ ప్రారంభ సమయం నుండి +3 గంటల గణన
-                const calculatedFinishedIso = isFinished ? calculatePlus3HoursIso(m.startDate || m.startTime) : null;
+                const timings = calculateMatchTimings(m.startDate || m.startTime, m.format, isFinished);
 
                 return res.json({
                   success: true,
@@ -353,7 +362,8 @@ app.get('/api/fetch-score', async (req, res) => {
                   targetEquation: statusText,
                   isLive: isLive,
                   isFinished: isFinished,
-                  calculatedFinishedDate: calculatedFinishedIso
+                  startTime: timings.startTimeIso,
+                  calculatedFinishedDate: timings.calculatedFinishedIso
                 });
               }
             }
@@ -456,9 +466,9 @@ app.get('/api/fetch-score', async (req, res) => {
               targetEq = `${chasingTeam} need ${minScore.remRuns} runs in ${minScore.remBalls} balls`;
             }
 
-            // Cricbuzz Match Start Timestamp కి +3 గంటలు జోడించడం
+            // మ్యాచ్ సమయం & ఎక్స్‌ట్రా 3 గంటల గణన
             const rawStart = mHeader.matchStartTimestamp || mHeader.startDate || cbJson.matchHeader?.matchStartTimestamp;
-            const calculatedFinishedIso = isFinished ? calculatePlus3HoursIso(rawStart) : null;
+            const timings = calculateMatchTimings(rawStart, mHeader.matchFormat, isFinished);
 
             payload = {
               success: true,
@@ -476,14 +486,15 @@ app.get('/api/fetch-score', async (req, res) => {
               targetEquation: targetEq || statusText,
               isLive: Boolean(isLive),
               isFinished: Boolean(isFinished),
-              calculatedFinishedDate: calculatedFinishedIso
+              startTime: timings.startTimeIso,
+              calculatedFinishedDate: timings.calculatedFinishedIso
             };
           }
         }
       } catch (e) {}
 
-      // బ్యాకప్ ఫాల్‌బ్యాక్ (2026 సిరీస్ సంవత్సరం స్కోర్ గా రాకుండా కరెక్ట్ చేసిన భాగం)
-      if (!payload || !payload.t1_score) {
+      // బ్యాకప్ ఫాల్‌బ్యాక్ (ఇయర్ 2026 స్కోర్‌గా రాకుండా కరెక్ట్ చేసిన భాగం)
+      if (!payload || !payload.t1_score || !payload.t2_score) {
         try {
           const targetWebUrl = target.includes("http") ? target : `https://www.cricbuzz.com/live-cricket-scores/${cbMatchId}`;
           const htmlRes = await fetch(targetWebUrl, {
@@ -510,14 +521,14 @@ app.get('/api/fetch-score', async (req, res) => {
             }
 
             let extractedScores = [];
-            // "2026" సంవత్సరాన్ని స్కోర్ అనుకోకుండా తప్పనిసరిగా ఓవర్లు ఉండేలా పటిష్టమైన Regex
+            // స్కోర్ తర్వాత తప్పనిసరిగా ఓవర్లు ఉండేలా మరియు కేవలం సంవత్సరాలను వదిలివేసే రెగెక్స్
             const cleanScoreRegex = /([A-Z]{2,6}(?:-W)?)\s+([0-9]{1,4}(?:\/[0-9]{1,2})?)\s*(?:\(([\d\.]+(?:\s*(?:ov|ovs))?)\))/gi;
             let mEntry;
 
             while ((mEntry = cleanScoreRegex.exec(cleanHtmlHead)) !== null) {
               const teamKey = mEntry[1].trim();
               const scoreVal = mEntry[2].trim().replace('-', '/');
-              // ఒకవేళ 2024, 2025, 2026 వంటి సంవత్సరం నంబర్ వికెట్లు లేకుండా వస్తే దాన్ని స్కోర్ గా తీసుకోదు
+              // 2024, 2025, 2026 వంటి సంవత్సరాల నంబర్లను స్కోర్ నుండి ఫిల్టర్ చేయడం
               if (scoreVal === "2024" || scoreVal === "2025" || scoreVal === "2026") continue;
               
               let rawOv = mEntry[3] ? mEntry[3].replace(/ovs?/i, '').trim() : '';
@@ -542,6 +553,8 @@ app.get('/api/fetch-score', async (req, res) => {
             const isFinished = statusText.toLowerCase().includes("won by") || statusText.toLowerCase().includes("beat") || (s1 && s2);
             const isLive = !isFinished && statusText.toLowerCase().includes("need");
 
+            const timings = calculateMatchTimings(Date.now() - (3.75 * 3600 * 1000), "t20", isFinished);
+
             payload = {
               success: true,
               source: "cricbuzz",
@@ -553,12 +566,13 @@ app.get('/api/fetch-score', async (req, res) => {
               t2_img: getTeamFlagUrl(outT2),
               t1_score: s1,
               t2_score: s2,
-              statusNotice: statusText || "New Zealand won by 87 runs",
+              statusNotice: statusText || "Match Completed",
               dynamicBadge: isFinished ? "MATCH ENDED" : (isLive ? "2ND INNINGS" : "LIVE"),
               targetEquation: statusText || payload?.targetEquation || "",
               isLive: Boolean(isLive),
               isFinished: Boolean(isFinished),
-              calculatedFinishedDate: isFinished ? calculatePlus3HoursIso(Date.now() - (3 * 3600 * 1000)) : null
+              startTime: timings.startTimeIso,
+              calculatedFinishedDate: timings.calculatedFinishedIso
             };
           }
         } catch (e) {}
@@ -608,8 +622,7 @@ app.get('/api/fetch-score', async (req, res) => {
             targetEq = d.status;
           }
 
-          // CricAPI dateTimeGMT నుండి ప్రారంభ సమయానికి +3 గంటల గణన
-          const calculatedFinishedIso = isFinished ? calculatePlus3HoursIso(d.dateTimeGMT || d.date) : null;
+          const timings = calculateMatchTimings(d.dateTimeGMT || d.date, d.matchType, isFinished);
 
           return res.json({
             success: true,
@@ -627,7 +640,8 @@ app.get('/api/fetch-score', async (req, res) => {
             targetEquation: targetEq || d.status || "",
             isLive: Boolean(isLive),
             isFinished: Boolean(isFinished),
-            calculatedFinishedDate: calculatedFinishedIso
+            startTime: timings.startTimeIso,
+            calculatedFinishedDate: timings.calculatedFinishedIso
           });
         }
       }
