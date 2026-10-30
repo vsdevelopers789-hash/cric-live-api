@@ -4,23 +4,28 @@ const cors = require('cors');
 const app = express();
 app.use(cors());
 
-// 1. అఫీషియల్ CricAPI / High-Res Flag CDN బేస్ & డైరెక్ట్ మ్యాపింగ్
+// =========================================================================
+// 1. HIGH-RES COUNTRY FLAG CDN BASE & DIRECT COUNTRY MAPPINGS
+// =========================================================================
 const CRICAPI_FLAG_CDN_BASE = "https://cdorg.b-cdn.net/flags";
 
 const DIRECT_COUNTRY_CDN_MAP = {
+  // Full ICC Members (Men & Women)
   "india": `${CRICAPI_FLAG_CDN_BASE}/in.svg`, "ind": `${CRICAPI_FLAG_CDN_BASE}/in.svg`, "indw": `${CRICAPI_FLAG_CDN_BASE}/in.svg`,
   "australia": `${CRICAPI_FLAG_CDN_BASE}/au.svg`, "aus": `${CRICAPI_FLAG_CDN_BASE}/au.svg`, "ausw": `${CRICAPI_FLAG_CDN_BASE}/au.svg`,
   "england": `${CRICAPI_FLAG_CDN_BASE}/gb-eng.svg`, "eng": `${CRICAPI_FLAG_CDN_BASE}/gb-eng.svg`, "engw": `${CRICAPI_FLAG_CDN_BASE}/gb-eng.svg`,
-  "south africa": `${CRICAPI_FLAG_CDN_BASE}/za.svg`, "rsa": `${CRICAPI_FLAG_CDN_BASE}/za.svg`, "sa": `${CRICAPI_FLAG_CDN_BASE}/za.svg`,
+  "south africa": `${CRICAPI_FLAG_CDN_BASE}/za.svg`, "rsa": `${CRICAPI_FLAG_CDN_BASE}/za.svg`, "sa": `${CRICAPI_FLAG_CDN_BASE}/za.svg`, "saw": `${CRICAPI_FLAG_CDN_BASE}/za.svg`,
   "pakistan": `${CRICAPI_FLAG_CDN_BASE}/pk.svg`, "pak": `${CRICAPI_FLAG_CDN_BASE}/pk.svg`, "pakw": `${CRICAPI_FLAG_CDN_BASE}/pk.svg`,
   "new zealand": `${CRICAPI_FLAG_CDN_BASE}/nz.svg`, "nz": `${CRICAPI_FLAG_CDN_BASE}/nz.svg`, "nzw": `${CRICAPI_FLAG_CDN_BASE}/nz.svg`,
   "west indies": `${CRICAPI_FLAG_CDN_BASE}/wi.svg`, "wi": `${CRICAPI_FLAG_CDN_BASE}/wi.svg`, "wiw": `${CRICAPI_FLAG_CDN_BASE}/wi.svg`,
   "sri lanka": `${CRICAPI_FLAG_CDN_BASE}/lk.svg`, "sl": `${CRICAPI_FLAG_CDN_BASE}/lk.svg`, "slw": `${CRICAPI_FLAG_CDN_BASE}/lk.svg`,
-  "bangladesh": `${CRICAPI_FLAG_CDN_BASE}/bd.svg`, "ban": `${CRICAPI_FLAG_CDN_BASE}/bd.svg`, "bd": `${CRICAPI_FLAG_CDN_BASE}/bd.svg`,
+  "bangladesh": `${CRICAPI_FLAG_CDN_BASE}/bd.svg`, "ban": `${CRICAPI_FLAG_CDN_BASE}/bd.svg`, "bd": `${CRICAPI_FLAG_CDN_BASE}/bd.svg`, "banw": `${CRICAPI_FLAG_CDN_BASE}/bd.svg`,
   "afghanistan": `${CRICAPI_FLAG_CDN_BASE}/af.svg`, "afg": `${CRICAPI_FLAG_CDN_BASE}/af.svg`,
   "zimbabwe": `${CRICAPI_FLAG_CDN_BASE}/zw.svg`, "zim": `${CRICAPI_FLAG_CDN_BASE}/zw.svg`, "zimw": `${CRICAPI_FLAG_CDN_BASE}/zw.svg`,
-  "ireland": `${CRICAPI_FLAG_CDN_BASE}/ie.svg`, "ire": `${CRICAPI_FLAG_CDN_BASE}/ie.svg`,
-  "scotland": `${CRICAPI_FLAG_CDN_BASE}/gb-sct.svg`, "sco": `${CRICAPI_FLAG_CDN_BASE}/gb-sct.svg`,
+  "ireland": `${CRICAPI_FLAG_CDN_BASE}/ie.svg`, "ire": `${CRICAPI_FLAG_CDN_BASE}/ie.svg`, "irew": `${CRICAPI_FLAG_CDN_BASE}/ie.svg`,
+
+  // Major Associate & ICC Tournament Members
+  "scotland": `${CRICAPI_FLAG_CDN_BASE}/gb-sct.svg`, "sco": `${CRICAPI_FLAG_CDN_BASE}/gb-sct.svg`, "scow": `${CRICAPI_FLAG_CDN_BASE}/gb-sct.svg`,
   "netherlands": `${CRICAPI_FLAG_CDN_BASE}/nl.svg`, "ned": `${CRICAPI_FLAG_CDN_BASE}/nl.svg`,
   "usa": `${CRICAPI_FLAG_CDN_BASE}/us.svg`, "united states": `${CRICAPI_FLAG_CDN_BASE}/us.svg`,
   "uae": `${CRICAPI_FLAG_CDN_BASE}/ae.svg`, "emirates": `${CRICAPI_FLAG_CDN_BASE}/ae.svg`,
@@ -35,7 +40,13 @@ const DIRECT_COUNTRY_CDN_MAP = {
   "italy": `${CRICAPI_FLAG_CDN_BASE}/it.svg`, "ita": `${CRICAPI_FLAG_CDN_BASE}/it.svg`,
   "jersey": `${CRICAPI_FLAG_CDN_BASE}/je.svg`, "jer": `${CRICAPI_FLAG_CDN_BASE}/je.svg`,
   "kuwait": `${CRICAPI_FLAG_CDN_BASE}/kw.svg`, "kuw": `${CRICAPI_FLAG_CDN_BASE}/kw.svg`,
-  "qatar": `${CRICAPI_FLAG_CDN_BASE}/qa.svg`, "qat": `${CRICAPI_FLAG_CDN_BASE}/qa.svg`
+  "qatar": `${CRICAPI_FLAG_CDN_BASE}/qa.svg`, "qat": `${CRICAPI_FLAG_CDN_BASE}/qa.svg`,
+  "malaysia": `${CRICAPI_FLAG_CDN_BASE}/my.svg`, "mas": `${CRICAPI_FLAG_CDN_BASE}/my.svg`,
+  "singapore": `${CRICAPI_FLAG_CDN_BASE}/sg.svg`, "sgp": `${CRICAPI_FLAG_CDN_BASE}/sg.svg`,
+  "germany": `${CRICAPI_FLAG_CDN_BASE}/de.svg`, "ger": `${CRICAPI_FLAG_CDN_BASE}/de.svg`,
+  "bermuda": `${CRICAPI_FLAG_CDN_BASE}/bm.svg`, "ber": `${CRICAPI_FLAG_CDN_BASE}/bm.svg`,
+  "denmark": `${CRICAPI_FLAG_CDN_BASE}/dk.svg`, "den": `${CRICAPI_FLAG_CDN_BASE}/dk.svg`,
+  "thailand": `${CRICAPI_FLAG_CDN_BASE}/th.svg`, "thai": `${CRICAPI_FLAG_CDN_BASE}/th.svg`, "thaiw": `${CRICAPI_FLAG_CDN_BASE}/th.svg`
 };
 
 function getTeamFlagUrl(teamName) {
@@ -51,9 +62,11 @@ function getTeamFlagUrl(teamName) {
   return "";
 }
 
-// 2. సమగ్ర టీమ్ మ్యాపింగ్ డిక్షనరీ (అన్ని లీగ్‌లు & జట్లు కలిపి)
+// =========================================================================
+// 2. EXTENDED UNIVERSAL TEAM ALIASES (FULL MEMBERS, ASSOCIATES & T20 LEAGUES)
+// =========================================================================
 const TEAM_ALIASES = {
-  // 1. Full Member International Men & Women Teams
+  // 1. Full Members International (Men & Women)
   "ind": ["india", "ind", "indw", "indiaw", "indiawomen", "teamindia", "indians", "bcci"],
   "zim": ["zimbabwe", "zim", "zimw", "zimbabwew", "zimbabwewomen", "chevrons"],
   "aus": ["australia", "aus", "ausw", "australiaw", "australiawomen", "aussie", "aussies"],
@@ -67,11 +80,11 @@ const TEAM_ALIASES = {
   "afg": ["afghanistan", "afg", "afghan"],
   "ire": ["ireland", "ire", "irew", "irelandw"],
 
-  // 2. Associate & ICC Tournament Teams
+  // 2. Associates & ICC Tournament Teams
   "usa": ["unitedstates", "usa", "unitedstatesofamerica", "us"],
   "nep": ["nepal", "nep", "rhinos"],
   "ned": ["netherlands", "ned", "holland", "dutch"],
-  "sco": ["scotland", "sco", "scotlandw"],
+  "sco": ["scotland", "sco", "scow", "scotlandw"],
   "nam": ["namibia", "nam", "eagles"],
   "uae": ["unitedarabemirates", "uae", "emirates", "uaew"],
   "can": ["canada", "can"],
@@ -84,6 +97,12 @@ const TEAM_ALIASES = {
   "jer": ["jersey", "jer"],
   "kuw": ["kuwait", "kuw"],
   "qat": ["qatar", "qat"],
+  "mas": ["malaysia", "mas"],
+  "sgp": ["singapore", "sgp"],
+  "ger": ["germany", "ger"],
+  "ber": ["bermuda", "ber"],
+  "den": ["denmark", "den"],
+  "tha": ["thailand", "thai", "thaiw"],
 
   // 3. Indian Premier League (IPL)
   "csk": ["chennaisuperkings", "csk", "chennai"],
@@ -112,7 +131,7 @@ const TEAM_ALIASES = {
   "ms":  ["multansultans", "ms", "multan"],
   "qg":  ["quettagladiators", "qg", "quetta"],
 
-  // 6. Big Bash League (BBL)
+  // 6. Big Bash League (BBL & WBBL)
   "ps":  ["perthscorchers", "ps", "scorchers"],
   "ss":  ["sydneysixers", "ss", "sixers"],
   "msb": ["melbournestars", "stars"],
@@ -120,10 +139,59 @@ const TEAM_ALIASES = {
   "bh":  ["brisbaneheat", "heat"],
   "as":  ["adelaidestrikers", "strikers"],
   "hh":  ["hobarthurricanes", "hurricanes"],
-  "st":  ["sydneythunder", "thunder"]
+  "st":  ["sydneythunder", "thunder"],
+
+  // 7. SA20 (South Africa T20)
+  "sec": ["sunriserseasterncape", "sec", "sunrisers"],
+  "pr":  ["paarlroyals", "pr", "paarl"],
+  "mi-ct": ["micapetown", "mict", "capetown"],
+  "joh": ["joburgsuperkings", "jsk", "joburg"],
+  "dsg": ["durbanssupergiants", "dsg", "durban"],
+  "pc":  ["pretoriacapitals", "pc", "pretoria"],
+
+  // 8. Caribbean Premier League (CPL & WCPL)
+  "tkr": ["trinbagoknightriders", "tkr", "trinbago"],
+  "br":  ["barbadosroyals", "br", "barbados"],
+  "gaw": ["guyanaamazonwarriors", "gaw", "guyana", "warriors"],
+  "sknp":["stkittsnevispatriots", "sknp", "patriots"],
+  "slk": ["stluciakings", "slk", "stlucia"],
+  "abf": ["antiguabarbuda falcons", "falcons", "abf"],
+
+  // 9. Major League Cricket (MLC - USA)
+  "miny": ["minewyork", "miny", "newyork"],
+  "tsr":  ["texassuperkings", "tsk", "texas"],
+  "seo":  ["seattleorcas", "orcas", "seattle"],
+  "wfr":  ["washingtonfreedom", "freedom", "washington"],
+  "lar":  ["losangelesknightriders", "lakr", "losangeles"],
+  "sf":   ["sanfranciscounicorns", "unicorns", "sanfrancisco"],
+
+  // 10. International League T20 (ILT20 - UAE)
+  "miev": ["miemirates", "miev", "emirates"],
+  "adkr": ["abudhabiknightriders", "adkr", "abudhabi"],
+  "dv":   ["desertvipers", "vipers"],
+  "gg-ae":["gulfgiants", "giants"],
+  "sw":   ["sharjahwarriors", "warriors"],
+  "dc-ae":["dubai capitals", "dubaicapitals"],
+
+  // 11. The Hundred (England)
+  "bp":  ["birminghamphoenix", "phoenix"],
+  "ls":  ["londonspirit", "spirit"],
+  "mo":  ["manchesteroriginals", "originals"],
+  "nsc": ["northernsuperchargers", "superchargers"],
+  "ov":  ["ovalinvincibles", "invincibles"],
+  "sb":  ["southernbrave", "brave"],
+  "tr":  ["trentrockets", "rockets"],
+  "wf":  ["welshfire", "fire"],
+
+  // 12. Super Smash (New Zealand)
+  "auk": ["aucklandaces", "auckland", "aces"],
+  "can-nz": ["canterburykings", "canterbury"],
+  "cd":  ["centralstags", "stags"],
+  "otg": ["otagovolts", "volts"],
+  "nd":  ["northerndistricts", "knights"],
+  "wel": ["wellingtonfirebirds", "wellington"]
 };
 
-// 3. సమగ్ర టీమ్ మ్యాచింగ్ ఫంక్షన్
 function isSameTeam(nameA, nameB) {
   if (!nameA || !nameB) return false;
   const a = String(nameA).toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -140,7 +208,9 @@ function isSameTeam(nameA, nameB) {
   return false;
 }
 
-// 4. యూనివర్సల్ లైవ్ స్కోర్ హ్యాండ్లర్
+// =========================================================================
+// 3. COMPLETE LIVE SCORE ROUTE (CRICBUZZ, ESPN CRICINFO & CRICAPI)
+// =========================================================================
 app.get('/api/fetch-score', async (req, res) => {
   const target = req.query.id || "";
   const apiKey = req.query.apikey || "";
@@ -153,7 +223,7 @@ app.get('/api/fetch-score', async (req, res) => {
 
   try {
     // -------------------------------------------------------------
-    // A. ESPN CRICINFO / ESPN.IN (Strict Match ID Separation)
+    // A. ESPN CRICINFO / ESPN.IN
     // -------------------------------------------------------------
     if (target.includes("cricinfo.com") || target.includes("espn.in") || target.includes("espncricinfo.com")) {
       let espnSeriesId = "";
@@ -223,7 +293,7 @@ app.get('/api/fetch-score', async (req, res) => {
                   success: true,
                   source: "espncricinfo",
                   matchId: espnMatchId,
-                  series: m.series?.name || "",
+                  series: m.series?.name || m.series?.longName || "",
                   t1: outT1,
                   t2: outT2,
                   t1_img: getTeamFlagUrl(outT1),
@@ -245,7 +315,7 @@ app.get('/api/fetch-score', async (req, res) => {
     }
 
     // -------------------------------------------------------------
-    // B. CRICBUZZ HANDLER (వికెట్లు, ఓవర్లు, ఫ్లాగ్స్, Need runs / Result)
+    // B. CRICBUZZ HANDLER (Series Name, Wickets, Overs, Need Runs & Result)
     // -------------------------------------------------------------
     if (target.includes("cricbuzz.com") || /^\d{5,7}$/.test(target)) {
       let cbMatchId = target;
@@ -283,6 +353,8 @@ app.get('/api/fetch-score', async (req, res) => {
               const t2Name = mHeader.team2?.name || mHeader.team2?.sName || "";
               const outT1 = t1Query || t1Name;
               const outT2 = t2Query || t2Name;
+
+              let seriesName = mHeader.seriesName || mHeader.seriesDesc || cbJson.seriesName || "";
 
               let s1 = "", s2 = "";
               const inningsList = minScore.matchScoreDetails?.inningsScoreList || [];
@@ -336,7 +408,7 @@ app.get('/api/fetch-score', async (req, res) => {
                 success: true,
                 source: "cricbuzz",
                 matchId: cbMatchId,
-                series: mHeader.seriesName || "",
+                series: seriesName,
                 t1: outT1,
                 t2: outT2,
                 t1_img: getTeamFlagUrl(outT1),
@@ -357,7 +429,7 @@ app.get('/api/fetch-score', async (req, res) => {
       }
 
       // 2. HTML Scraper ఫాల్‌బ్యాక్
-      if (!payload) {
+      if (!payload || !payload.series) {
         try {
           const targetWebUrl = target.includes("http") ? target : `https://www.cricbuzz.com/live-cricket-scores/${cbMatchId}`;
           const htmlRes = await fetch(targetWebUrl, {
@@ -369,66 +441,75 @@ app.get('/api/fetch-score', async (req, res) => {
 
           if (htmlRes.ok) {
             let html = await htmlRes.text();
-            let statusText = "";
-            const stMatch = html.match(/<div[^>]*class="[^"]*(?:cb-min-stts|cb-text-complete|cb-text-live|cb-text-inprogress)[^"]*"[^>]*>([^<]+)<\/div>/i);
-            if (stMatch && stMatch[1]) statusText = stMatch[1].trim();
+            
+            let parsedSeries = "";
+            const seriesMatch = html.match(/<span[^>]*itemprop="name"[^>]*>([^<]+)<\/span>/i) || html.match(/<h1[^>]*class="[^"]*cb-nav-hdr[^"]*"[^>]*>.*?,\s*([^<,-]+(?:Series|Tour|Trophy|Cup|League|202[4-9])[^<,-]*)/i);
+            if (seriesMatch && seriesMatch[1]) parsedSeries = seriesMatch[1].trim();
 
-            const needRunsMatch = html.match(/([A-Za-z\s]+need\s+[0-9]+\s+runs(?:[^\n<]*))/i);
-            if (needRunsMatch && needRunsMatch[1]) statusText = needRunsMatch[1].trim();
+            if (payload) {
+              if (!payload.series && parsedSeries) payload.series = parsedSeries;
+            } else {
+              let statusText = "";
+              const stMatch = html.match(/<div[^>]*class="[^"]*(?:cb-min-stts|cb-text-complete|cb-text-live|cb-text-inprogress)[^"]*"[^>]*>([^<]+)<\/div>/i);
+              if (stMatch && stMatch[1]) statusText = stMatch[1].trim();
 
-            let extractedScores = [];
-            const cleanScoreRegex = /([A-Z]{2,6}(?:-W)?)\s+([0-9]{1,4}(?:\/[0-9]{1,2})?)\s*(?:\(([\d\.]+(?:\s*(?:ov|ovs))?)\))?/gi;
-            let mEntry;
+              const needRunsMatch = html.match(/([A-Za-z\s]+need\s+[0-9]+\s+runs(?:[^\n<]*))/i);
+              if (needRunsMatch && needRunsMatch[1]) statusText = needRunsMatch[1].trim();
 
-            while ((mEntry = cleanScoreRegex.exec(html)) !== null) {
-              const teamKey = mEntry[1].trim();
-              const scoreVal = mEntry[2].trim().replace('-', '/');
-              let rawOv = mEntry[3] ? mEntry[3].replace(/ovs?/i, '').trim() : '';
-              const oversVal = rawOv ? ` (${rawOv} ov)` : '';
-              const rawRuns = parseInt(scoreVal.split('/')[0]);
-              if (rawRuns < 1000 && (rawRuns >= 10 || scoreVal.includes('/'))) {
-                if (!extractedScores.some(x => x.name === teamKey)) {
-                  extractedScores.push({ name: teamKey, score: `${scoreVal}${oversVal}`.trim() });
+              let extractedScores = [];
+              const cleanScoreRegex = /([A-Z]{2,6}(?:-W)?)\s+([0-9]{1,4}(?:\/[0-9]{1,2})?)\s*(?:\(([\d\.]+(?:\s*(?:ov|ovs))?)\))?/gi;
+              let mEntry;
+
+              while ((mEntry = cleanScoreRegex.exec(html)) !== null) {
+                const teamKey = mEntry[1].trim();
+                const scoreVal = mEntry[2].trim().replace('-', '/');
+                let rawOv = mEntry[3] ? mEntry[3].replace(/ovs?/i, '').trim() : '';
+                const oversVal = rawOv ? ` (${rawOv} ov)` : '';
+                const rawRuns = parseInt(scoreVal.split('/')[0]);
+                if (rawRuns < 1000 && (rawRuns >= 10 || scoreVal.includes('/'))) {
+                  if (!extractedScores.some(x => x.name === teamKey)) {
+                    extractedScores.push({ name: teamKey, score: `${scoreVal}${oversVal}`.trim() });
+                  }
                 }
               }
+
+              let s1 = "", s2 = "";
+              let outT1 = t1Query || (extractedScores[0] ? extractedScores[0].name : "Team 1");
+              let outT2 = t2Query || (extractedScores[1] ? extractedScores[1].name : "Team 2");
+
+              extractedScores.forEach(item => {
+                if (isSameTeam(outT1, item.name)) s1 = item.score;
+                else if (isSameTeam(outT2, item.name)) s2 = item.score;
+              });
+
+              if (!s1 && !s2 && extractedScores.length > 0) {
+                s1 = extractedScores[0] ? extractedScores[0].score : "";
+                s2 = extractedScores[1] ? extractedScores[1].score : "";
+              }
+
+              const statusLower = statusText.toLowerCase();
+              const isFinished = statusLower.includes("won by") || statusLower.includes("beat");
+              const isLive = !isFinished && (statusLower.includes("need") || statusLower.includes("trail") || statusLower.includes("lead"));
+
+              payload = {
+                success: true,
+                source: "cricbuzz",
+                matchId: cbMatchId,
+                series: parsedSeries,
+                t1: outT1,
+                t2: outT2,
+                t1_img: getTeamFlagUrl(outT1),
+                t2_img: getTeamFlagUrl(outT2),
+                t1_score: s1,
+                t2_score: s2,
+                statusNotice: statusText,
+                dynamicBadge: isFinished ? "MATCH ENDED" : (s1 && s2 ? "2ND INNINGS" : "1ST INNINGS"),
+                targetEquation: statusText,
+                isLive: isLive,
+                isFinished: isFinished,
+                calculatedFinishedDate: isFinished ? new Date().toISOString() : null
+              };
             }
-
-            let s1 = "", s2 = "";
-            let outT1 = t1Query || (extractedScores[0] ? extractedScores[0].name : "Team 1");
-            let outT2 = t2Query || (extractedScores[1] ? extractedScores[1].name : "Team 2");
-
-            extractedScores.forEach(item => {
-              if (isSameTeam(outT1, item.name)) s1 = item.score;
-              else if (isSameTeam(outT2, item.name)) s2 = item.score;
-            });
-
-            if (!s1 && !s2 && extractedScores.length > 0) {
-              s1 = extractedScores[0] ? extractedScores[0].score : "";
-              s2 = extractedScores[1] ? extractedScores[1].score : "";
-            }
-
-            const statusLower = statusText.toLowerCase();
-            const isFinished = statusLower.includes("won by") || statusLower.includes("beat");
-            const isLive = !isFinished && (statusLower.includes("need") || statusLower.includes("trail") || statusLower.includes("lead"));
-
-            payload = {
-              success: true,
-              source: "cricbuzz",
-              matchId: cbMatchId,
-              series: "",
-              t1: outT1,
-              t2: outT2,
-              t1_img: getTeamFlagUrl(outT1),
-              t2_img: getTeamFlagUrl(outT2),
-              t1_score: s1,
-              t2_score: s2,
-              statusNotice: statusText,
-              dynamicBadge: isFinished ? "MATCH ENDED" : (s1 && s2 ? "2ND INNINGS" : "1ST INNINGS"),
-              targetEquation: statusText,
-              isLive: isLive,
-              isFinished: isFinished,
-              calculatedFinishedDate: isFinished ? new Date().toISOString() : null
-            };
           }
         } catch (e) {}
       }
@@ -439,7 +520,7 @@ app.get('/api/fetch-score', async (req, res) => {
     }
 
     // -------------------------------------------------------------
-    // C. CRICAPI HANDLER (Flag CDN & Exact Scores)
+    // C. CRICAPI HANDLER
     // -------------------------------------------------------------
     if (apiKey) {
       const cricUrl = `https://api.cricapi.com/v1/match_info?apikey=${encodeURIComponent(apiKey)}&id=${encodeURIComponent(target)}`;
