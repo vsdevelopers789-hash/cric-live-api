@@ -229,6 +229,30 @@ function fmtInning(sc, defaultMaxOvers) {
   return `${runs}${wkts}${oversStr}`.trim();
 }
 
+// -------------------------------------------------------------
+// HELPER: START DATE + 3 HOURS CALCULATOR
+// -------------------------------------------------------------
+function calculatePlus3HoursIso(startDateVal) {
+  if (!startDateVal) return new Date().toISOString();
+  try {
+    let startEpoch = 0;
+    if (typeof startDateVal === 'number' || /^\d{10,13}$/.test(String(startDateVal).trim())) {
+      startEpoch = parseInt(String(startDateVal).trim());
+      if (String(startEpoch).length === 10) startEpoch *= 1000;
+    } else {
+      startEpoch = new Date(startDateVal).getTime();
+    }
+
+    if (!startEpoch || isNaN(startEpoch)) return new Date().toISOString();
+
+    // ప్రారంభ సమయానికి ఖచ్చితంగా 3 గంటలు జోడించడం (+3 Hours = 3 * 3600 * 1000 ms)
+    const threeHoursMs = 3 * 60 * 60 * 1000;
+    return new Date(startEpoch + threeHoursMs).toISOString();
+  } catch (e) {
+    return new Date().toISOString();
+  }
+}
+
 // =========================================================================
 // 3. COMPLETE LIVE SCORE ROUTE (PURE ISO DATE & STRICT BOOLEAN)
 // =========================================================================
@@ -310,6 +334,9 @@ app.get('/api/fetch-score', async (req, res) => {
                 const outT1 = t1Query || t1Name;
                 const outT2 = t2Query || t2Name;
 
+                // మ్యాచ్ ప్రారంభ సమయం నుండి +3 గంటల గణన
+                const calculatedFinishedIso = isFinished ? calculatePlus3HoursIso(m.startDate || m.startTime) : null;
+
                 return res.json({
                   success: true,
                   source: "espncricinfo",
@@ -326,7 +353,7 @@ app.get('/api/fetch-score', async (req, res) => {
                   targetEquation: statusText,
                   isLive: isLive,
                   isFinished: isFinished,
-                  calculatedFinishedDate: isFinished ? new Date().toISOString() : null
+                  calculatedFinishedDate: calculatedFinishedIso
                 });
               }
             }
@@ -429,6 +456,10 @@ app.get('/api/fetch-score', async (req, res) => {
               targetEq = `${chasingTeam} need ${minScore.remRuns} runs in ${minScore.remBalls} balls`;
             }
 
+            // Cricbuzz Match Start Timestamp కి +3 గంటలు జోడించడం
+            const rawStart = mHeader.matchStartTimestamp || mHeader.startDate || cbJson.matchHeader?.matchStartTimestamp;
+            const calculatedFinishedIso = isFinished ? calculatePlus3HoursIso(rawStart) : null;
+
             payload = {
               success: true,
               source: "cricbuzz",
@@ -445,13 +476,13 @@ app.get('/api/fetch-score', async (req, res) => {
               targetEquation: targetEq || statusText,
               isLive: Boolean(isLive),
               isFinished: Boolean(isFinished),
-              calculatedFinishedDate: isFinished ? new Date().toISOString() : null
+              calculatedFinishedDate: calculatedFinishedIso
             };
           }
         }
       } catch (e) {}
 
-      // బ్యాకప్ ఫాల్‌బ్యాక్
+      // బ్యాకప్ ఫాల్‌బ్యాక్ (2026 సిరీస్ సంవత్సరం స్కోర్ గా రాకుండా కరెక్ట్ చేసిన భాగం)
       if (!payload || !payload.t1_score) {
         try {
           const targetWebUrl = target.includes("http") ? target : `https://www.cricbuzz.com/live-cricket-scores/${cbMatchId}`;
@@ -479,12 +510,16 @@ app.get('/api/fetch-score', async (req, res) => {
             }
 
             let extractedScores = [];
-            const cleanScoreRegex = /([A-Z]{2,6}(?:-W)?)\s+([0-9]{1,4}(?:\/[0-9]{1,2})?)\s*(?:\(([\d\.]+(?:\s*(?:ov|ovs))?)\))?/gi;
+            // "2026" సంవత్సరాన్ని స్కోర్ అనుకోకుండా తప్పనిసరిగా ఓవర్లు ఉండేలా పటిష్టమైన Regex
+            const cleanScoreRegex = /([A-Z]{2,6}(?:-W)?)\s+([0-9]{1,4}(?:\/[0-9]{1,2})?)\s*(?:\(([\d\.]+(?:\s*(?:ov|ovs))?)\))/gi;
             let mEntry;
 
             while ((mEntry = cleanScoreRegex.exec(cleanHtmlHead)) !== null) {
               const teamKey = mEntry[1].trim();
               const scoreVal = mEntry[2].trim().replace('-', '/');
+              // ఒకవేళ 2024, 2025, 2026 వంటి సంవత్సరం నంబర్ వికెట్లు లేకుండా వస్తే దాన్ని స్కోర్ గా తీసుకోదు
+              if (scoreVal === "2024" || scoreVal === "2025" || scoreVal === "2026") continue;
+              
               let rawOv = mEntry[3] ? mEntry[3].replace(/ovs?/i, '').trim() : '';
               const oversVal = rawOv ? ` (${rawOv} ov)` : ' (20 ov)';
               if (!extractedScores.some(x => x.name === teamKey)) {
@@ -523,7 +558,7 @@ app.get('/api/fetch-score', async (req, res) => {
               targetEquation: statusText || payload?.targetEquation || "",
               isLive: Boolean(isLive),
               isFinished: Boolean(isFinished),
-              calculatedFinishedDate: isFinished ? new Date().toISOString() : null
+              calculatedFinishedDate: isFinished ? calculatePlus3HoursIso(Date.now() - (3 * 3600 * 1000)) : null
             };
           }
         } catch (e) {}
@@ -573,6 +608,9 @@ app.get('/api/fetch-score', async (req, res) => {
             targetEq = d.status;
           }
 
+          // CricAPI dateTimeGMT నుండి ప్రారంభ సమయానికి +3 గంటల గణన
+          const calculatedFinishedIso = isFinished ? calculatePlus3HoursIso(d.dateTimeGMT || d.date) : null;
+
           return res.json({
             success: true,
             source: "cricapi",
@@ -589,7 +627,7 @@ app.get('/api/fetch-score', async (req, res) => {
             targetEquation: targetEq || d.status || "",
             isLive: Boolean(isLive),
             isFinished: Boolean(isFinished),
-            calculatedFinishedDate: isFinished ? new Date().toISOString() : null
+            calculatedFinishedDate: calculatedFinishedIso
           });
         }
       }
