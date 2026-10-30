@@ -230,9 +230,9 @@ function fmtInning(sc, defaultMaxOvers) {
 }
 
 // =========================================================================
-// MATCH DURATION + 3 HOURS CALCULATOR ENGINE
+// ENGINE: FORMAT PLAYING DURATION + 3 HOURS EXTRA CALCULATION
 // =========================================================================
-function computeFinishedTimeWithExtra3Hours(startDateVal, seriesOrFormat) {
+function calculateSeriesSmartTime(startDateVal, seriesOrFormatText, isFinished) {
   if (!startDateVal) return new Date().toISOString();
   try {
     let startEpoch = 0;
@@ -245,34 +245,28 @@ function computeFinishedTimeWithExtra3Hours(startDateVal, seriesOrFormat) {
 
     if (!startEpoch || isNaN(startEpoch)) return new Date().toISOString();
 
-    const text = String(seriesOrFormat || "").toLowerCase();
-    let playingDurationMs = 3.75 * 60 * 60 * 1000; // T20 డిఫాల్ట్: 3 గంటల 45 నిమిషాలు
-
-    if (text.includes("odi") || text.includes("one day") || text.includes("50 ov")) {
-      playingDurationMs = 8 * 60 * 60 * 1000; // ODI: 8 గంటలు
-    } else if (text.includes("test") || text.includes("trophy") || text.includes("championship")) {
-      playingDurationMs = 7 * 60 * 60 * 1000; // Test: రోజుకి 7 గంటలు
+    // 1. Upcoming అయితే కేవలం మ్యాచ్ స్టార్ట్ టైమ్ మాత్రమే ఇవ్వాలి
+    if (!isFinished) {
+      return new Date(startEpoch).toISOString();
     }
 
-    // మ్యాచ్ సమయం + మరో 3 గంటలు అదనంగా
-    const extra3HoursMs = 3 * 60 * 60 * 1000;
-    return new Date(startEpoch + playingDurationMs + extra3HoursMs).toISOString();
-  } catch (e) {
-    return new Date().toISOString();
-  }
-}
+    // 2. Finished అయితే: Series/Format ఆధారంగా Playing Time + Extra 3 Hours
+    const text = String(seriesOrFormatText || '').toLowerCase();
+    let playingDurationHours = 3.5; // డిఫాల్ట్ T20 ఇన్నింగ్స్ సమయం (3.5 గంటలు)
 
-function computeStartTimeIso(startDateVal) {
-  if (!startDateVal) return new Date().toISOString();
-  try {
-    let startEpoch = 0;
-    if (typeof startDateVal === 'number' || /^\d{10,13}$/.test(String(startDateVal).trim())) {
-      startEpoch = parseInt(String(startDateVal).trim());
-      if (String(startEpoch).length === 10) startEpoch *= 1000;
-    } else {
-      startEpoch = new Date(startDateVal).getTime();
+    if (text.includes('test')) {
+      playingDurationHours = 7.0; // టెస్ట్ మ్యాచ్ డే సెషన్స్ (7 గంటలు)
+    } else if (text.includes('odi') || text.includes('50 over') || text.includes('one day')) {
+      playingDurationHours = 8.0; // వన్డే మ్యాచ్ 2 ఇన్నింగ్స్ సమయం (8 గంటలు)
+    } else if (text.includes('t20') || text.includes('t20i') || text.includes('hundred') || text.includes('t10')) {
+      playingDurationHours = 3.5; // T20 సమయం
     }
-    return new Date(startEpoch).toISOString();
+
+    // ఇన్నింగ్స్ ప్లేయింగ్ సమయంతో పాటు అదనంగా 3 గంటలు కలపడం
+    const totalExtraHours = playingDurationHours + 3.0;
+    const totalExtraMs = totalExtraHours * 60 * 60 * 1000;
+
+    return new Date(startEpoch + totalExtraMs).toISOString();
   } catch (e) {
     return new Date().toISOString();
   }
@@ -360,9 +354,7 @@ app.get('/api/fetch-score', async (req, res) => {
                 const outT2 = t2Query || t2Name;
                 const seriesTitle = m.series?.name || m.series?.longName || "";
 
-                const calculatedFinishedDate = isFinished 
-                  ? computeFinishedTimeWithExtra3Hours(m.startDate || m.startTime, seriesTitle)
-                  : computeStartTimeIso(m.startDate || m.startTime);
+                const calculatedFinishedIso = calculateSeriesSmartTime(m.startDate || m.startTime, seriesTitle, isFinished);
 
                 return res.json({
                   success: true,
@@ -380,7 +372,7 @@ app.get('/api/fetch-score', async (req, res) => {
                   targetEquation: statusText,
                   isLive: isLive,
                   isFinished: isFinished,
-                  calculatedFinishedDate: calculatedFinishedDate
+                  calculatedFinishedDate: calculatedFinishedIso
                 });
               }
             }
@@ -390,7 +382,7 @@ app.get('/api/fetch-score', async (req, res) => {
     }
 
     // -------------------------------------------------------------
-    // B. CRICBUZZ HANDLER
+    // B. CRICBUZZ HANDLER (మీ ఒరిజినల్ స్కోర్ లాజిక్ యధాతథంగా)
     // -------------------------------------------------------------
     if (target.includes("cricbuzz.com") || /^\d{5,7}$/.test(target)) {
       let cbMatchId = target;
@@ -432,6 +424,7 @@ app.get('/api/fetch-score', async (req, res) => {
 
             let s1 = "", s2 = "";
 
+            // 1. inningsScoreList నుండి రెండు జట్ల స్కోర్లు & ఓవర్లు
             const inningsList = minScore.matchScoreDetails?.inningsScoreList || [];
             inningsList.forEach(sc => {
               const scStr = fmtInning(sc, defaultMaxOvers);
@@ -442,6 +435,7 @@ app.get('/api/fetch-score', async (req, res) => {
               }
             });
 
+            // 2. team1Score & team2Score (పూర్తయిన మ్యాచ్ స్కోర్లు)
             const t1ScObj = mHeader.team1Score || minScore.matchScoreDetails?.team1Score;
             const t2ScObj = mHeader.team2Score || minScore.matchScoreDetails?.team2Score;
 
@@ -461,9 +455,11 @@ app.get('/api/fetch-score', async (req, res) => {
               }
             }
 
+            // 3. ఓవర్లు లేకపోతే తప్పనిసరిగా చేర్చడం
             if (s1 && !s1.includes("(") && defaultMaxOvers) s1 += ` (${defaultMaxOvers} ov)`;
             if (s2 && !s2.includes("(") && defaultMaxOvers) s2 += ` (${defaultMaxOvers} ov)`;
 
+            // 4. మ్యాచ్ ముగిసిందా లేదా లైవ్‌లో ఉందా అని ధృవీకరించడం
             const isFinished = state === "complete" || statusText.toLowerCase().includes("won by") || statusText.toLowerCase().includes("beat") || (s1 && s2 && inningsList.length >= 2 && !minScore.remRuns);
             const isLive = !isFinished && (state === "inprogress" || state === "innings break");
 
@@ -479,10 +475,9 @@ app.get('/api/fetch-score', async (req, res) => {
               targetEq = `${chasingTeam} need ${minScore.remRuns} runs in ${minScore.remBalls} balls`;
             }
 
+            // ప్రారంభ సమయం + ఇన్నింగ్స్ సమయం + 3 అదనపు గంటల లెక్కింపు
             const rawStart = mHeader.matchStartTimestamp || mHeader.startDate || cbJson.matchHeader?.matchStartTimestamp;
-            const calculatedFinishedDate = isFinished 
-              ? computeFinishedTimeWithExtra3Hours(rawStart, seriesName || formatStr) 
-              : computeStartTimeIso(rawStart);
+            const calculatedFinishedIso = calculateSeriesSmartTime(rawStart, seriesName + " " + formatStr, isFinished);
 
             payload = {
               success: true,
@@ -500,7 +495,7 @@ app.get('/api/fetch-score', async (req, res) => {
               targetEquation: targetEq || statusText,
               isLive: Boolean(isLive),
               isFinished: Boolean(isFinished),
-              calculatedFinishedDate: calculatedFinishedDate
+              calculatedFinishedDate: calculatedFinishedIso
             };
           }
         }
@@ -562,9 +557,7 @@ app.get('/api/fetch-score', async (req, res) => {
             const isFinished = statusText.toLowerCase().includes("won by") || statusText.toLowerCase().includes("beat") || (s1 && s2);
             const isLive = !isFinished && statusText.toLowerCase().includes("need");
 
-            const calculatedFinishedDate = isFinished
-              ? computeFinishedTimeWithExtra3Hours(Date.now() - (6 * 3600 * 1000), seriesName)
-              : new Date().toISOString();
+            const calculatedFinishedIso = calculateSeriesSmartTime(Date.now() - (6.5 * 3600 * 1000), seriesName, isFinished);
 
             payload = {
               success: true,
@@ -582,7 +575,7 @@ app.get('/api/fetch-score', async (req, res) => {
               targetEquation: statusText || payload?.targetEquation || "",
               isLive: Boolean(isLive),
               isFinished: Boolean(isFinished),
-              calculatedFinishedDate: calculatedFinishedDate
+              calculatedFinishedDate: calculatedFinishedIso
             };
           }
         } catch (e) {}
@@ -632,9 +625,7 @@ app.get('/api/fetch-score', async (req, res) => {
             targetEq = d.status;
           }
 
-          const calculatedFinishedDate = isFinished
-            ? computeFinishedTimeWithExtra3Hours(d.dateTimeGMT || d.date, d.name)
-            : computeStartTimeIso(d.dateTimeGMT || d.date);
+          const calculatedFinishedIso = calculateSeriesSmartTime(d.dateTimeGMT || d.date, d.name, isFinished);
 
           return res.json({
             success: true,
@@ -652,7 +643,7 @@ app.get('/api/fetch-score', async (req, res) => {
             targetEquation: targetEq || d.status || "",
             isLive: Boolean(isLive),
             isFinished: Boolean(isFinished),
-            calculatedFinishedDate: calculatedFinishedDate
+            calculatedFinishedDate: calculatedFinishedIso
           });
         }
       }
