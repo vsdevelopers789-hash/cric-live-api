@@ -230,7 +230,7 @@ function fmtInning(sc, defaultMaxOvers) {
 }
 
 // =========================================================================
-// ENGINE: FORMAT PLAYING DURATION + 3 HOURS EXTRA CALCULATION
+// ENGINE: SERIES INNINGS DURATION + 3 HOURS EXTRA CALCULATION
 // =========================================================================
 function calculateSeriesSmartTime(startDateVal, seriesOrFormatText, isFinished) {
   if (!startDateVal) return new Date().toISOString();
@@ -245,7 +245,7 @@ function calculateSeriesSmartTime(startDateVal, seriesOrFormatText, isFinished) 
 
     if (!startEpoch || isNaN(startEpoch)) return new Date().toISOString();
 
-    // 1. Upcoming అయితే కేవలం మ్యాచ్ స్టార్ట్ టైమ్ మాత్రమే ఇవ్వాలి
+    // 1. Upcoming అయితే ఖచ్చితమైన మ్యాచ్ స్టార్ట్ టైమ్ మాత్రమే ఇవ్వాలి
     if (!isFinished) {
       return new Date(startEpoch).toISOString();
     }
@@ -255,16 +255,16 @@ function calculateSeriesSmartTime(startDateVal, seriesOrFormatText, isFinished) 
     let playingDurationHours = 3.5; // డిఫాల్ట్ T20 ఇన్నింగ్స్ సమయం (3.5 గంటలు)
 
     if (text.includes('test')) {
-      playingDurationHours = 7.0; // టెస్ట్ మ్యాచ్ డే సెషన్స్ (7 గంటలు)
+      playingDurationHours = 7.0; // టెస్ట్ మ్యాచ్ డే సెషన్స్ సమయం (7 గంటలు)
     } else if (text.includes('odi') || text.includes('50 over') || text.includes('one day')) {
       playingDurationHours = 8.0; // వన్డే మ్యాచ్ 2 ఇన్నింగ్స్ సమయం (8 గంటలు)
     } else if (text.includes('t20') || text.includes('t20i') || text.includes('hundred') || text.includes('t10')) {
-      playingDurationHours = 3.5; // T20 సమయం
+      playingDurationHours = 3.5; // T20 ఇన్నింగ్స్ సమయం
     }
 
-    // ఇన్నింగ్స్ ప్లేయింగ్ సమయంతో పాటు అదనంగా 3 గంటలు కలపడం
-    const totalExtraHours = playingDurationHours + 3.0;
-    const totalExtraMs = totalExtraHours * 60 * 60 * 1000;
+    // ఆ ఇన్నింగ్స్ ప్లేయింగ్ టైమ్ తో పాటు అదనంగా 3 గంటలు కలపడం
+    const totalDurationHours = playingDurationHours + 3.0;
+    const totalExtraMs = totalDurationHours * 60 * 60 * 1000;
 
     return new Date(startEpoch + totalExtraMs).toISOString();
   } catch (e) {
@@ -382,7 +382,7 @@ app.get('/api/fetch-score', async (req, res) => {
     }
 
     // -------------------------------------------------------------
-    // B. CRICBUZZ HANDLER (మీ ఒరిజినల్ స్కోర్ లాజిక్ యధాతథంగా)
+    // B. CRICBUZZ HANDLER (విశ్వసనీయ OVERS, STATUS & FINISHED FIX)
     // -------------------------------------------------------------
     if (target.includes("cricbuzz.com") || /^\d{5,7}$/.test(target)) {
       let cbMatchId = target;
@@ -475,7 +475,7 @@ app.get('/api/fetch-score', async (req, res) => {
               targetEq = `${chasingTeam} need ${minScore.remRuns} runs in ${minScore.remBalls} balls`;
             }
 
-            // ప్రారంభ సమయం + ఇన్నింగ్స్ సమయం + 3 అదనపు గంటల లెక్కింపు
+            // ప్రారంభ సమయం + ఇన్నింగ్స్ సమయం + అదనంగా 3 గంటలు
             const rawStart = mHeader.matchStartTimestamp || mHeader.startDate || cbJson.matchHeader?.matchStartTimestamp;
             const calculatedFinishedIso = calculateSeriesSmartTime(rawStart, seriesName + " " + formatStr, isFinished);
 
