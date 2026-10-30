@@ -66,7 +66,6 @@ function getTeamFlagUrl(teamName) {
 // 2. EXTENDED UNIVERSAL TEAM ALIASES (FULL MEMBERS, ASSOCIATES & ALL LEAGUES)
 // =========================================================================
 const TEAM_ALIASES = {
-  // 1. Full Member International (Men & Women)
   "ind": ["india", "ind", "indw", "indiaw", "indiawomen", "teamindia", "indians", "bcci"],
   "zim": ["zimbabwe", "zim", "zimw", "zimbabwew", "zimbabwewomen", "chevrons"],
   "aus": ["australia", "aus", "ausw", "australiaw", "australiawomen", "aussie", "aussies"],
@@ -80,7 +79,6 @@ const TEAM_ALIASES = {
   "afg": ["afghanistan", "afg", "afghan"],
   "ire": ["ireland", "ire", "irew", "irelandw"],
 
-  // 2. Associate & ICC Tournament Teams
   "usa": ["unitedstates", "usa", "unitedstatesofamerica", "us"],
   "nep": ["nepal", "nep", "rhinos"],
   "ned": ["netherlands", "ned", "holland", "dutch"],
@@ -104,7 +102,6 @@ const TEAM_ALIASES = {
   "den": ["denmark", "den"],
   "tha": ["thailand", "thai", "thaiw"],
 
-  // 3. Indian Premier League (IPL)
   "csk": ["chennaisuperkings", "csk", "chennai"],
   "rcb": ["royalchallengersbengaluru", "royalchallengersbangalore", "rcb", "bengaluru", "bangalore"],
   "mi":  ["mumbaiindians", "mi", "mumbai"],
@@ -116,14 +113,12 @@ const TEAM_ALIASES = {
   "gt":  ["gujarattitans", "gt", "gujarat"],
   "lsg": ["lucknowsupergiants", "lsg", "lucknow"],
 
-  // 4. Women's Premier League (WPL)
   "dcw": ["delhicapitalswomen", "dcwomen", "dcw"],
   "miw": ["mumbaiindianswomen", "miwomen", "miw"],
   "rcbw":["royalchallengersbengaluruwomen", "rcbwomen", "rcbw"],
   "ggw": ["gujaratgiants", "gujaratgiantswomen", "gg", "ggw"],
   "upw": ["upwarriorz", "upwarriorzwomen", "upw"],
 
-  // 5. Pakistan Super League (PSL)
   "lq":  ["lahoreqalandars", "lq", "lahore"],
   "kk":  ["karachikings", "kk", "karachi"],
   "islu":["islamabadunited", "iu", "islu", "islamabad"],
@@ -131,7 +126,6 @@ const TEAM_ALIASES = {
   "ms":  ["multansultans", "ms", "multan"],
   "qg":  ["quettagladiators", "qg", "quetta"],
 
-  // 6. Big Bash League (BBL & WBBL)
   "ps":  ["perthscorchers", "ps", "scorchers"],
   "ss":  ["sydneysixers", "ss", "sixers"],
   "msb": ["melbournestars", "stars"],
@@ -141,7 +135,6 @@ const TEAM_ALIASES = {
   "hh":  ["hobarthurricanes", "hurricanes"],
   "st":  ["sydneythunder", "thunder"],
 
-  // 7. SA20 (South Africa T20)
   "sec": ["sunriserseasterncape", "sec", "sunrisers"],
   "pr":  ["paarlroyals", "pr", "paarl"],
   "mi-ct": ["micapetown", "mict", "capetown"],
@@ -149,7 +142,6 @@ const TEAM_ALIASES = {
   "dsg": ["durbanssupergiants", "dsg", "durban"],
   "pc":  ["pretoriacapitals", "pc", "pretoria"],
 
-  // 8. Caribbean Premier League (CPL & WCPL)
   "tkr": ["trinbagoknightriders", "tkr", "trinbago"],
   "br":  ["barbadosroyals", "br", "barbados"],
   "gaw": ["guyanaamazonwarriors", "gaw", "guyana", "warriors"],
@@ -157,7 +149,6 @@ const TEAM_ALIASES = {
   "slk": ["stluciakings", "slk", "stlucia"],
   "abf": ["antiguabarbuda falcons", "falcons", "abf"],
 
-  // 9. Major League Cricket (MLC - USA)
   "miny": ["minewyork", "miny", "newyork"],
   "tsr":  ["texassuperkings", "tsk", "texas"],
   "seo":  ["seattleorcas", "orcas", "seattle"],
@@ -165,7 +156,6 @@ const TEAM_ALIASES = {
   "lar":  ["losangelesknightriders", "lakr", "losangeles"],
   "sf":   ["sanfranciscounicorns", "unicorns", "sanfrancisco"],
 
-  // 10. International League T20 (ILT20 - UAE)
   "miev": ["miemirates", "miev", "emirates"],
   "adkr": ["abudhabiknightriders", "adkr", "abudhabi"],
   "dv":   ["desertvipers", "vipers"],
@@ -173,7 +163,6 @@ const TEAM_ALIASES = {
   "sw":   ["sharjahwarriors", "warriors"],
   "dc-ae":["dubai capitals", "dubaicapitals"],
 
-  // 11. The Hundred (England)
   "bp":  ["birminghamphoenix", "phoenix"],
   "ls":  ["londonspirit", "spirit"],
   "mo":  ["manchesteroriginals", "originals"],
@@ -183,7 +172,6 @@ const TEAM_ALIASES = {
   "tr":  ["trentrockets", "rockets"],
   "wf":  ["welshfire", "fire"],
 
-  // 12. Super Smash (New Zealand)
   "auk": ["aucklandaces", "auckland", "aces"],
   "can-nz": ["canterburykings", "canterbury"],
   "cd":  ["centralstags", "stags"],
@@ -216,20 +204,7 @@ function extractSeriesFromUrlSlug(urlStr) {
   if (cleanMatch && cleanMatch !== lastPart && cleanMatch.length > 3) {
     return cleanMatch.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
   }
-  return "";
-}
-
-function fmtInning(sc, defaultMaxOvers) {
-  if (!sc) return "";
-  const runs = sc.runs !== undefined ? sc.runs : (sc.score !== undefined ? sc.score : 0);
-  let wkts = sc.wickets !== undefined ? `/${sc.wickets}` : (sc.wkts !== undefined ? `/${sc.wkts}` : (sc.isAllOut ? '/10' : ''));
-  let rawOv = sc.overs ?? sc.ovrs ?? sc.totalOvers ?? sc.maxOvers ?? '';
-  if (!rawOv && defaultMaxOvers) rawOv = defaultMaxOvers;
-  let oversStr = (rawOv !== '' && rawOv !== undefined) ? ` (${rawOv} ov)` : '';
-  return `${runs}${wkts}${oversStr}`.trim();
-}
-
-// =========================================================================
+  return "";// =========================================================================
 // ENGINE: SERIES INNINGS DURATION + 3 HOURS EXTRA CALCULATION
 // =========================================================================
 function calculateSeriesSmartTime(startDateVal, seriesOrFormatText, isFinished) {
@@ -245,7 +220,7 @@ function calculateSeriesSmartTime(startDateVal, seriesOrFormatText, isFinished) 
 
     if (!startEpoch || isNaN(startEpoch)) return new Date().toISOString();
 
-    // 1. Upcoming అయితే కేవలం మ్యాచ్ స్టార్ట్ టైమ్ మాత్రమే ఇవ్వాలి
+    // 1. Upcoming అయితే ఖచ్చితమైన మ్యాచ్ స్టార్ట్ టైమ్ మాత్రమే ఇవ్వాలి
     if (!isFinished) {
       return new Date(startEpoch).toISOString();
     }
@@ -393,7 +368,6 @@ app.get('/api/fetch-score', async (req, res) => {
       let detectedSeries = extractSeriesFromUrlSlug(target);
       let payload = null;
 
-      // Commentary & Match Info APIలను పారలల్ గా ఫెచ్ చేయడం
       const cbUrl = `https://www.cricbuzz.com/api/cricket-match/commentary/${cbMatchId}`;
       const cbInfoUrl = `https://www.cricbuzz.com/api/cricket-match/info/${cbMatchId}`;
 
@@ -426,13 +400,11 @@ app.get('/api/fetch-score', async (req, res) => {
           minScore = cbJson.miniscore || {};
         }
 
-        // 1. Match Info API నుండి ఖచ్చితమైన మ్యాచ్ ప్రారంభ సమయాన్ని తీసుకోవడం
         if (infoResp.status === "fulfilled" && infoResp.value.ok) {
           const infoJson = await infoResp.value.json();
           rawStart = infoJson.matchInfo?.startDate || infoJson.startDate || infoJson.matchStartTimestamp || infoJson.matchInfo?.matchStartTimestamp;
         }
 
-        // 2. Info లో రాకపోతే Commentary హెడర్ నుండి ప్రారంభ సమయాన్ని వెతకడం
         if (!rawStart) {
           rawStart = mHeader.startDate || mHeader.matchStartTimestamp || cbJson.matchStartTimestamp;
         }
@@ -453,7 +425,6 @@ app.get('/api/fetch-score', async (req, res) => {
 
           let s1 = "", s2 = "";
 
-          // 1. inningsScoreList నుండి రెండు జట్ల స్కోర్లు & ఓవర్లు
           const inningsList = minScore.matchScoreDetails?.inningsScoreList || [];
           inningsList.forEach(sc => {
             const scStr = fmtInning(sc, defaultMaxOvers);
@@ -464,7 +435,6 @@ app.get('/api/fetch-score', async (req, res) => {
             }
           });
 
-          // 2. team1Score & team2Score (పూర్తయిన మ్యాచ్ స్కోర్లు)
           const t1ScObj = mHeader.team1Score || minScore.matchScoreDetails?.team1Score;
           const t2ScObj = mHeader.team2Score || minScore.matchScoreDetails?.team2Score;
 
@@ -484,11 +454,9 @@ app.get('/api/fetch-score', async (req, res) => {
             }
           }
 
-          // 3. ఓవర్లు లేకపోతే తప్పనిసరిగా చేర్చడం
           if (s1 && !s1.includes("(") && defaultMaxOvers) s1 += ` (${defaultMaxOvers} ov)`;
           if (s2 && !s2.includes("(") && defaultMaxOvers) s2 += ` (${defaultMaxOvers} ov)`;
 
-          // 4. మ్యాచ్ ముగిసిందా లేదా లైవ్‌లో ఉందా అని ధృవీకరించడం
           const isFinished = state === "complete" || statusText.toLowerCase().includes("won by") || statusText.toLowerCase().includes("beat") || (s1 && s2 && inningsList.length >= 2 && !minScore.remRuns);
           const isLive = !isFinished && (state === "inprogress" || state === "innings break");
 
@@ -504,7 +472,6 @@ app.get('/api/fetch-score', async (req, res) => {
             targetEq = `${chasingTeam} need ${minScore.remRuns} runs in ${minScore.remBalls} balls`;
           }
 
-          // ప్రారంభ సమయం + ఇన్నింగ్స్ సమయం + అదనంగా 3 గంటలు
           const calculatedFinishedIso = calculateSeriesSmartTime(rawStart, seriesName + " " + formatStr, isFinished);
 
           payload = {
@@ -684,3 +651,15 @@ app.get('/api/fetch-score', async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+}
+
+function fmtInning(sc, defaultMaxOvers) {
+  if (!sc) return "";
+  const runs = sc.runs !== undefined ? sc.runs : (sc.score !== undefined ? sc.score : 0);
+  let wkts = sc.wickets !== undefined ? `/${sc.wickets}` : (sc.wkts !== undefined ? `/${sc.wkts}` : (sc.isAllOut ? '/10' : ''));
+  let rawOv = sc.overs ?? sc.ovrs ?? sc.totalOvers ?? sc.maxOvers ?? '';
+  if (!rawOv && defaultMaxOvers) rawOv = defaultMaxOvers;
+  let oversStr = (rawOv !== '' && rawOv !== undefined) ? ` (${rawOv} ov)` : '';
+  return `${runs}${wkts}${oversStr}`.trim();
+}
