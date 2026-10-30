@@ -5,7 +5,7 @@ const app = express();
 app.use(cors());
 
 // =========================================================================
-// 1. HIGH-RES COUNTRY FLAG CDN BASE & DIRECT COUNTRY MAPPINGS
+// 1. COMPLETE HIGH-RES COUNTRY FLAG CDN BASE & DIRECT COUNTRY MAPPINGS
 // =========================================================================
 const CRICAPI_FLAG_CDN_BASE = "https://cdorg.b-cdn.net/flags";
 
@@ -24,7 +24,7 @@ const DIRECT_COUNTRY_CDN_MAP = {
   "zimbabwe": `${CRICAPI_FLAG_CDN_BASE}/zw.svg`, "zim": `${CRICAPI_FLAG_CDN_BASE}/zw.svg`, "zimw": `${CRICAPI_FLAG_CDN_BASE}/zw.svg`,
   "ireland": `${CRICAPI_FLAG_CDN_BASE}/ie.svg`, "ire": `${CRICAPI_FLAG_CDN_BASE}/ie.svg`, "irew": `${CRICAPI_FLAG_CDN_BASE}/ie.svg`,
 
-  // Major Associate & ICC Tournament Members
+  // Major Associate & ICC Global Members
   "scotland": `${CRICAPI_FLAG_CDN_BASE}/gb-sct.svg`, "sco": `${CRICAPI_FLAG_CDN_BASE}/gb-sct.svg`, "scow": `${CRICAPI_FLAG_CDN_BASE}/gb-sct.svg`,
   "netherlands": `${CRICAPI_FLAG_CDN_BASE}/nl.svg`, "ned": `${CRICAPI_FLAG_CDN_BASE}/nl.svg`,
   "usa": `${CRICAPI_FLAG_CDN_BASE}/us.svg`, "united states": `${CRICAPI_FLAG_CDN_BASE}/us.svg`,
@@ -63,10 +63,10 @@ function getTeamFlagUrl(teamName) {
 }
 
 // =========================================================================
-// 2. EXTENDED UNIVERSAL TEAM ALIASES (FULL MEMBERS, ASSOCIATES & T20 LEAGUES)
+// 2. EXTENDED UNIVERSAL TEAM ALIASES (FULL MEMBERS, ASSOCIATES & ALL LEAGUES)
 // =========================================================================
 const TEAM_ALIASES = {
-  // 1. Full Members International (Men & Women)
+  // 1. Full Member International (Men & Women)
   "ind": ["india", "ind", "indw", "indiaw", "indiawomen", "teamindia", "indians", "bcci"],
   "zim": ["zimbabwe", "zim", "zimw", "zimbabwew", "zimbabwewomen", "chevrons"],
   "aus": ["australia", "aus", "ausw", "australiaw", "australiawomen", "aussie", "aussies"],
@@ -80,7 +80,7 @@ const TEAM_ALIASES = {
   "afg": ["afghanistan", "afg", "afghan"],
   "ire": ["ireland", "ire", "irew", "irelandw"],
 
-  // 2. Associates & ICC Tournament Teams
+  // 2. Associate & ICC Tournament Teams
   "usa": ["unitedstates", "usa", "unitedstatesofamerica", "us"],
   "nep": ["nepal", "nep", "rhinos"],
   "ned": ["netherlands", "ned", "holland", "dutch"],
@@ -208,6 +208,17 @@ function isSameTeam(nameA, nameB) {
   return false;
 }
 
+function extractSeriesFromUrlSlug(urlStr) {
+  if (!urlStr || !urlStr.includes("cricbuzz.com")) return "";
+  const parts = urlStr.split('/');
+  const lastPart = parts[parts.length - 1] || parts[parts.length - 2] || "";
+  const cleanMatch = lastPart.replace(/^[a-z0-9]+-vs-[a-z0-9]+(?:-[0-9]+(?:st|nd|rd|th)?-match)?-/i, '');
+  if (cleanMatch && cleanMatch !== lastPart && cleanMatch.length > 3) {
+    return cleanMatch.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+  }
+  return "";
+}
+
 // =========================================================================
 // 3. COMPLETE LIVE SCORE ROUTE (CRICBUZZ, ESPN CRICINFO & CRICAPI)
 // =========================================================================
@@ -324,8 +335,8 @@ app.get('/api/fetch-score', async (req, res) => {
       else if (m && m[0]) cbMatchId = m[0];
 
       let payload = null;
+      let detectedSeriesName = extractSeriesFromUrlSlug(target);
 
-      // 1. JSON API
       const endpoints = [
         `https://www.cricbuzz.com/api/cricket-match/commentary/${cbMatchId}`,
         `https://www.cricbuzz.com/api/cricket-match/live-scores/${cbMatchId}`
@@ -354,7 +365,7 @@ app.get('/api/fetch-score', async (req, res) => {
               const outT1 = t1Query || t1Name;
               const outT2 = t2Query || t2Name;
 
-              let seriesName = mHeader.seriesName || mHeader.seriesDesc || cbJson.seriesName || "";
+              let seriesName = mHeader.seriesName || mHeader.seriesDesc || (mHeader.series && mHeader.series.name) || cbJson.seriesName || detectedSeriesName || "";
 
               let s1 = "", s2 = "";
               const inningsList = minScore.matchScoreDetails?.inningsScoreList || [];
@@ -428,7 +439,6 @@ app.get('/api/fetch-score', async (req, res) => {
         } catch (e) {}
       }
 
-      // 2. HTML Scraper ఫాల్‌బ్యాక్
       if (!payload || !payload.series) {
         try {
           const targetWebUrl = target.includes("http") ? target : `https://www.cricbuzz.com/live-cricket-scores/${cbMatchId}`;
@@ -443,8 +453,19 @@ app.get('/api/fetch-score', async (req, res) => {
             let html = await htmlRes.text();
             
             let parsedSeries = "";
-            const seriesMatch = html.match(/<span[^>]*itemprop="name"[^>]*>([^<]+)<\/span>/i) || html.match(/<h1[^>]*class="[^"]*cb-nav-hdr[^"]*"[^>]*>.*?,\s*([^<,-]+(?:Series|Tour|Trophy|Cup|League|202[4-9])[^<,-]*)/i);
-            if (seriesMatch && seriesMatch[1]) parsedSeries = seriesMatch[1].trim();
+            const navMatch = html.match(/class="[^"]*cb-nav-hdr[^"]*"[^>]*>[\s\S]*?<h1[^>]*>([\s\S]*?)<\/h1>/i);
+            if (navMatch && navMatch[1]) {
+              const fullH1 = navMatch[1].replace(/<[^>]+>/g, '').trim();
+              const h1Parts = fullH1.split(',');
+              if (h1Parts.length > 1) parsedSeries = h1Parts[h1Parts.length - 1].trim();
+            }
+
+            if (!parsedSeries) {
+              const spanMatch = html.match(/<span[^>]*itemprop="name"[^>]*>([^<]+)<\/span>/i);
+              if (spanMatch && spanMatch[1]) parsedSeries = spanMatch[1].trim();
+            }
+
+            if (!parsedSeries) parsedSeries = detectedSeriesName;
 
             if (payload) {
               if (!payload.series && parsedSeries) payload.series = parsedSeries;
