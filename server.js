@@ -326,7 +326,7 @@ app.get('/api/fetch-score', async (req, res) => {
     }
 
     // -------------------------------------------------------------
-    // B. CRICBUZZ HANDLER (Series Name, Wickets, Overs, Need Runs & Result)
+    // B. CRICBUZZ HANDLER (Accurate Batting Scores, Wickets & Overs Fix)
     // -------------------------------------------------------------
     if (target.includes("cricbuzz.com") || /^\d{5,7}$/.test(target)) {
       let cbMatchId = target;
@@ -371,6 +371,7 @@ app.get('/api/fetch-score', async (req, res) => {
               const inningsList = minScore.matchScoreDetails?.inningsScoreList || [];
 
               function buildExactScoreStr(sc) {
+                if (!sc) return "";
                 const runs = sc.score !== undefined ? sc.score : (sc.runs !== undefined ? sc.runs : 0);
                 let wkts = "";
                 if (sc.wickets !== undefined) wkts = `/${sc.wickets}`;
@@ -382,6 +383,7 @@ app.get('/api/fetch-score', async (req, res) => {
                 return `${runs}${wkts}${oversStr}`.trim();
               }
 
+              // ఇన్నింగ్స్ లిస్ట్ నుండి టీమ్ స్కోర్లు తీసుకోవడం
               inningsList.forEach(sc => {
                 const scStr = buildExactScoreStr(sc);
                 const batName = (sc.batTeamId === mHeader.team1?.id) ? t1Name : ((sc.batTeamId === mHeader.team2?.id) ? t2Name : "");
@@ -389,6 +391,14 @@ app.get('/api/fetch-score', async (req, res) => {
                 if (isSameTeam(outT1, batName)) s1 = scStr;
                 else if (isSameTeam(outT2, batName)) s2 = scStr;
               });
+
+              // లైవ్ బ్యాటింగ్ టీమ్ కరెంట్ స్కోరు (miniscore batsManDetails / currentInnings) తో మ్యాచ్ చేయడం
+              if (minScore.batTeamDetails) {
+                const liveBatScore = `${minScore.batTeamDetails.batTeamScore || 0}${minScore.batTeamDetails.batTeamWickets !== undefined ? '/' + minScore.batTeamDetails.batTeamWickets : ''} (${minScore.overs || ''} ov)`.trim();
+                const curBatTeamName = minScore.batTeamDetails.batTeamShortName || minScore.batTeamDetails.batTeamName || "";
+                if (isSameTeam(outT1, curBatTeamName)) s1 = liveBatScore;
+                else if (isSameTeam(outT2, curBatTeamName)) s2 = liveBatScore;
+              }
 
               if (!s1 && !s2 && inningsList.length > 0) {
                 s1 = buildExactScoreStr(inningsList[0]);
@@ -439,7 +449,8 @@ app.get('/api/fetch-score', async (req, res) => {
         } catch (e) {}
       }
 
-      if (!payload || !payload.series) {
+      // HTML Fallback
+      if (!payload || !payload.t1_score) {
         try {
           const targetWebUrl = target.includes("http") ? target : `https://www.cricbuzz.com/live-cricket-scores/${cbMatchId}`;
           const htmlRes = await fetch(targetWebUrl, {
@@ -467,70 +478,66 @@ app.get('/api/fetch-score', async (req, res) => {
 
             if (!parsedSeries) parsedSeries = detectedSeriesName;
 
-            if (payload) {
-              if (!payload.series && parsedSeries) payload.series = parsedSeries;
-            } else {
-              let statusText = "";
-              const stMatch = html.match(/<div[^>]*class="[^"]*(?:cb-min-stts|cb-text-complete|cb-text-live|cb-text-inprogress)[^"]*"[^>]*>([^<]+)<\/div>/i);
-              if (stMatch && stMatch[1]) statusText = stMatch[1].trim();
+            let statusText = "";
+            const stMatch = html.match(/<div[^>]*class="[^"]*(?:cb-min-stts|cb-text-complete|cb-text-live|cb-text-inprogress)[^"]*"[^>]*>([^<]+)<\/div>/i);
+            if (stMatch && stMatch[1]) statusText = stMatch[1].trim();
 
-              const needRunsMatch = html.match(/([A-Za-z\s]+need\s+[0-9]+\s+runs(?:[^\n<]*))/i);
-              if (needRunsMatch && needRunsMatch[1]) statusText = needRunsMatch[1].trim();
+            const needRunsMatch = html.match(/([A-Za-z\s]+need\s+[0-9]+\s+runs(?:[^\n<]*))/i);
+            if (needRunsMatch && needRunsMatch[1]) statusText = needRunsMatch[1].trim();
 
-              let extractedScores = [];
-              const cleanScoreRegex = /([A-Z]{2,6}(?:-W)?)\s+([0-9]{1,4}(?:\/[0-9]{1,2})?)\s*(?:\(([\d\.]+(?:\s*(?:ov|ovs))?)\))?/gi;
-              let mEntry;
+            let extractedScores = [];
+            const cleanScoreRegex = /([A-Z]{2,6}(?:-W)?)\s+([0-9]{1,4}(?:\/[0-9]{1,2})?)\s*(?:\(([\d\.]+(?:\s*(?:ov|ovs))?)\))?/gi;
+            let mEntry;
 
-              while ((mEntry = cleanScoreRegex.exec(html)) !== null) {
-                const teamKey = mEntry[1].trim();
-                const scoreVal = mEntry[2].trim().replace('-', '/');
-                let rawOv = mEntry[3] ? mEntry[3].replace(/ovs?/i, '').trim() : '';
-                const oversVal = rawOv ? ` (${rawOv} ov)` : '';
-                const rawRuns = parseInt(scoreVal.split('/')[0]);
-                if (rawRuns < 1000 && (rawRuns >= 10 || scoreVal.includes('/'))) {
-                  if (!extractedScores.some(x => x.name === teamKey)) {
-                    extractedScores.push({ name: teamKey, score: `${scoreVal}${oversVal}`.trim() });
-                  }
+            while ((mEntry = cleanScoreRegex.exec(html)) !== null) {
+              const teamKey = mEntry[1].trim();
+              const scoreVal = mEntry[2].trim().replace('-', '/');
+              let rawOv = mEntry[3] ? mEntry[3].replace(/ovs?/i, '').trim() : '';
+              const oversVal = rawOv ? ` (${rawOv} ov)` : '';
+              const rawRuns = parseInt(scoreVal.split('/')[0]);
+              if (rawRuns < 1000 && (rawRuns >= 10 || scoreVal.includes('/'))) {
+                if (!extractedScores.some(x => x.name === teamKey)) {
+                  extractedScores.push({ name: teamKey, score: `${scoreVal}${oversVal}`.trim() });
                 }
               }
-
-              let s1 = "", s2 = "";
-              let outT1 = t1Query || (extractedScores[0] ? extractedScores[0].name : "Team 1");
-              let outT2 = t2Query || (extractedScores[1] ? extractedScores[1].name : "Team 2");
-
-              extractedScores.forEach(item => {
-                if (isSameTeam(outT1, item.name)) s1 = item.score;
-                else if (isSameTeam(outT2, item.name)) s2 = item.score;
-              });
-
-              if (!s1 && !s2 && extractedScores.length > 0) {
-                s1 = extractedScores[0] ? extractedScores[0].score : "";
-                s2 = extractedScores[1] ? extractedScores[1].score : "";
-              }
-
-              const statusLower = statusText.toLowerCase();
-              const isFinished = statusLower.includes("won by") || statusLower.includes("beat");
-              const isLive = !isFinished && (statusLower.includes("need") || statusLower.includes("trail") || statusLower.includes("lead"));
-
-              payload = {
-                success: true,
-                source: "cricbuzz",
-                matchId: cbMatchId,
-                series: parsedSeries,
-                t1: outT1,
-                t2: outT2,
-                t1_img: getTeamFlagUrl(outT1),
-                t2_img: getTeamFlagUrl(outT2),
-                t1_score: s1,
-                t2_score: s2,
-                statusNotice: statusText,
-                dynamicBadge: isFinished ? "MATCH ENDED" : (s1 && s2 ? "2ND INNINGS" : "1ST INNINGS"),
-                targetEquation: statusText,
-                isLive: isLive,
-                isFinished: isFinished,
-                calculatedFinishedDate: isFinished ? new Date().toISOString() : null
-              };
             }
+
+            let s1 = "", s2 = "";
+            let outT1 = t1Query || (extractedScores[0] ? extractedScores[0].name : "Team 1");
+            let outT2 = t2Query || (extractedScores[1] ? extractedScores[1].name : "Team 2");
+
+            extractedScores.forEach(item => {
+              if (isSameTeam(outT1, item.name)) s1 = item.score;
+              else if (isSameTeam(outT2, item.name)) s2 = item.score;
+            });
+
+            if (!s1 && !s2 && extractedScores.length > 0) {
+              s1 = extractedScores[0] ? extractedScores[0].score : "";
+              s2 = extractedScores[1] ? extractedScores[1].score : "";
+            }
+
+            const statusLower = statusText.toLowerCase();
+            const isFinished = statusLower.includes("won by") || statusLower.includes("beat");
+            const isLive = !isFinished && (statusLower.includes("need") || statusLower.includes("trail") || statusLower.includes("lead"));
+
+            payload = {
+              success: true,
+              source: "cricbuzz",
+              matchId: cbMatchId,
+              series: parsedSeries,
+              t1: outT1,
+              t2: outT2,
+              t1_img: getTeamFlagUrl(outT1),
+              t2_img: getTeamFlagUrl(outT2),
+              t1_score: s1,
+              t2_score: s2,
+              statusNotice: statusText,
+              dynamicBadge: isFinished ? "MATCH ENDED" : (s1 && s2 ? "2ND INNINGS" : "1ST INNINGS"),
+              targetEquation: statusText,
+              isLive: isLive,
+              isFinished: isFinished,
+              calculatedFinishedDate: isFinished ? new Date().toISOString() : null
+            };
           }
         } catch (e) {}
       }
