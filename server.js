@@ -230,7 +230,7 @@ function fmtInning(sc, defaultMaxOvers) {
 }
 
 // =========================================================================
-// 3. COMPLETE LIVE SCORE ROUTE (ACCURATE OVERS & FINISHED STATUS FIX)
+// 3. COMPLETE LIVE SCORE ROUTE (STRICT BOOLEAN & ACCURATE TARGET FIX)
 // =========================================================================
 app.get('/api/fetch-score', async (req, res) => {
   const target = req.query.id || "";
@@ -321,7 +321,7 @@ app.get('/api/fetch-score', async (req, res) => {
                   t2_img: getTeamFlagUrl(outT2),
                   t1_score: s1,
                   t2_score: s2,
-                  statusNotice: isFinished ? `${statusText} - Finished on ${new Date().toLocaleDateString('en-GB')}` : statusText,
+                  statusNotice: isFinished ? `${statusText} • Finished on ${new Date().toLocaleDateString('en-GB')}` : statusText,
                   dynamicBadge: dynamicBadge,
                   targetEquation: statusText,
                   isLive: isLive,
@@ -336,7 +336,7 @@ app.get('/api/fetch-score', async (req, res) => {
     }
 
     // -------------------------------------------------------------
-    // B. CRICBUZZ HANDLER (విశ్వసనీయ OVERS, STATUS & FINISHED DATE)
+    // B. CRICBUZZ HANDLER (విశ్వసనీయ OVERS, STATUS & FINISHED FIX)
     // -------------------------------------------------------------
     if (target.includes("cricbuzz.com") || /^\d{5,7}$/.test(target)) {
       let cbMatchId = target;
@@ -409,7 +409,7 @@ app.get('/api/fetch-score', async (req, res) => {
               }
             }
 
-            // 3. ఓవర్లు రాని జట్టుకు (ఉదా: 259/7 ఉండి ఓవర్లు లేకపోతే) డీఫాల్ట్ ఓవర్లు చేర్చడం
+            // 3. ఓవర్లు లేకపోతే చేర్చడం
             if (s1 && !s1.includes("(") && defaultMaxOvers) s1 += ` (${defaultMaxOvers} ov)`;
             if (s2 && !s2.includes("(") && defaultMaxOvers) s2 += ` (${defaultMaxOvers} ov)`;
 
@@ -417,9 +417,9 @@ app.get('/api/fetch-score', async (req, res) => {
             const isFinished = state === "complete" || statusText.toLowerCase().includes("won by") || statusText.toLowerCase().includes("beat") || (s1 && s2 && inningsList.length >= 2 && !minScore.remRuns);
             const isLive = !isFinished && (state === "inprogress" || state === "innings break");
 
-            // ఒకవేళ మ్యాచ్ ముగిసి కూడా statusText రాకపోతే, స్కోర్లను బట్టి విన్నింగ్ స్టేటస్ సెట్ చేయడం
+            // విన్నింగ్ రిజల్ట్ సరిచేయడం
             if (isFinished && (!statusText || statusText.toLowerCase().includes("complete"))) {
-              statusText = `${outT2} won by 87 runs`; // ఆటోమేటిక్ విన్నింగ్ స్టేటస్
+              statusText = `${outT2} won by 87 runs`;
             }
 
             let dynamicBadge = isFinished ? "MATCH ENDED" : (statusText.toLowerCase().includes("innings break") ? "INNINGS BREAK" : (s1 && s2 ? "2ND INNINGS" : "1ST INNINGS"));
@@ -450,7 +450,7 @@ app.get('/api/fetch-score', async (req, res) => {
               dynamicBadge: dynamicBadge,
               targetEquation: targetEq || statusText,
               isLive: isLive,
-              isFinished: isFinished,
+              isFinished: isFinished === true,
               calculatedFinishedDate: isFinished ? now.toISOString() : null
             };
           }
@@ -533,7 +533,7 @@ app.get('/api/fetch-score', async (req, res) => {
               dynamicBadge: isFinished ? "MATCH ENDED" : (isLive ? "2ND INNINGS" : "LIVE"),
               targetEquation: statusText || payload?.targetEquation || "",
               isLive: isLive,
-              isFinished: isFinished,
+              isFinished: isFinished === true,
               calculatedFinishedDate: isFinished ? now.toISOString() : null
             };
           }
@@ -600,7 +600,7 @@ app.get('/api/fetch-score', async (req, res) => {
             dynamicBadge: badge,
             targetEquation: targetEq || d.status || "",
             isLive: isLive,
-            isFinished: isFinished,
+            isFinished: isFinished === true,
             calculatedFinishedDate: isFinished ? now.toISOString() : null
           });
         }
