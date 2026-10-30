@@ -10,7 +10,6 @@ app.use(cors());
 const CRICAPI_FLAG_CDN_BASE = "https://cdorg.b-cdn.net/flags";
 
 const DIRECT_COUNTRY_CDN_MAP = {
-  // Full ICC Members (Men & Women)
   "india": `${CRICAPI_FLAG_CDN_BASE}/in.svg`, "ind": `${CRICAPI_FLAG_CDN_BASE}/in.svg`, "indw": `${CRICAPI_FLAG_CDN_BASE}/in.svg`,
   "australia": `${CRICAPI_FLAG_CDN_BASE}/au.svg`, "aus": `${CRICAPI_FLAG_CDN_BASE}/au.svg`, "ausw": `${CRICAPI_FLAG_CDN_BASE}/au.svg`,
   "england": `${CRICAPI_FLAG_CDN_BASE}/gb-eng.svg`, "eng": `${CRICAPI_FLAG_CDN_BASE}/gb-eng.svg`, "engw": `${CRICAPI_FLAG_CDN_BASE}/gb-eng.svg`,
@@ -23,8 +22,6 @@ const DIRECT_COUNTRY_CDN_MAP = {
   "afghanistan": `${CRICAPI_FLAG_CDN_BASE}/af.svg`, "afg": `${CRICAPI_FLAG_CDN_BASE}/af.svg`,
   "zimbabwe": `${CRICAPI_FLAG_CDN_BASE}/zw.svg`, "zim": `${CRICAPI_FLAG_CDN_BASE}/zw.svg`, "zimw": `${CRICAPI_FLAG_CDN_BASE}/zw.svg`,
   "ireland": `${CRICAPI_FLAG_CDN_BASE}/ie.svg`, "ire": `${CRICAPI_FLAG_CDN_BASE}/ie.svg`, "irew": `${CRICAPI_FLAG_CDN_BASE}/ie.svg`,
-
-  // Major Associate & ICC Global Members
   "scotland": `${CRICAPI_FLAG_CDN_BASE}/gb-sct.svg`, "sco": `${CRICAPI_FLAG_CDN_BASE}/gb-sct.svg`, "scow": `${CRICAPI_FLAG_CDN_BASE}/gb-sct.svg`,
   "netherlands": `${CRICAPI_FLAG_CDN_BASE}/nl.svg`, "ned": `${CRICAPI_FLAG_CDN_BASE}/nl.svg`,
   "usa": `${CRICAPI_FLAG_CDN_BASE}/us.svg`, "united states": `${CRICAPI_FLAG_CDN_BASE}/us.svg`,
@@ -66,7 +63,6 @@ function getTeamFlagUrl(teamName) {
 // 2. EXTENDED UNIVERSAL TEAM ALIASES (FULL MEMBERS, ASSOCIATES & ALL LEAGUES)
 // =========================================================================
 const TEAM_ALIASES = {
-  // 1. Full Member International (Men & Women)
   "ind": ["india", "ind", "indw", "indiaw", "indiawomen", "teamindia", "indians", "bcci"],
   "zim": ["zimbabwe", "zim", "zimw", "zimbabwew", "zimbabwewomen", "chevrons"],
   "aus": ["australia", "aus", "ausw", "australiaw", "australiawomen", "aussie", "aussies"],
@@ -79,8 +75,6 @@ const TEAM_ALIASES = {
   "ban": ["bangladesh", "ban", "bd", "banw", "bangladeshw", "tigers"],
   "afg": ["afghanistan", "afg", "afghan"],
   "ire": ["ireland", "ire", "irew", "irelandw"],
-
-  // 2. Associate & ICC Tournament Teams
   "usa": ["unitedstates", "usa", "unitedstatesofamerica", "us"],
   "nep": ["nepal", "nep", "rhinos"],
   "ned": ["netherlands", "ned", "holland", "dutch"],
@@ -103,8 +97,6 @@ const TEAM_ALIASES = {
   "ber": ["bermuda", "ber"],
   "den": ["denmark", "den"],
   "tha": ["thailand", "thai", "thaiw"],
-
-  // 3. Indian Premier League (IPL)
   "csk": ["chennaisuperkings", "csk", "chennai"],
   "rcb": ["royalchallengersbengaluru", "royalchallengersbangalore", "rcb", "bengaluru", "bangalore"],
   "mi":  ["mumbaiindians", "mi", "mumbai"],
@@ -115,23 +107,17 @@ const TEAM_ALIASES = {
   "pbks":["punjabkings", "pbks", "punjab", "kxip"],
   "gt":  ["gujarattitans", "gt", "gujarat"],
   "lsg": ["lucknowsupergiants", "lsg", "lucknow"],
-
-  // 4. Women's Premier League (WPL)
   "dcw": ["delhicapitalswomen", "dcwomen", "dcw"],
   "miw": ["mumbaiindianswomen", "miwomen", "miw"],
   "rcbw":["royalchallengersbengaluruwomen", "rcbwomen", "rcbw"],
   "ggw": ["gujaratgiants", "gujaratgiantswomen", "gg", "ggw"],
   "upw": ["upwarriorz", "upwarriorzwomen", "upw"],
-
-  // 5. Pakistan Super League (PSL)
   "lq":  ["lahoreqalandars", "lq", "lahore"],
   "kk":  ["karachikings", "kk", "karachi"],
   "islu":["islamabadunited", "iu", "islu", "islamabad"],
   "pz":  ["peshawarzalmi", "pz", "peshawar"],
   "ms":  ["multansultans", "ms", "multan"],
   "qg":  ["quettagladiators", "qg", "quetta"],
-
-  // 6. Big Bash League (BBL & WBBL)
   "ps":  ["perthscorchers", "ps", "scorchers"],
   "ss":  ["sydneysixers", "ss", "sixers"],
   "msb": ["melbournestars", "stars"],
@@ -140,40 +126,30 @@ const TEAM_ALIASES = {
   "as":  ["adelaidestrikers", "strikers"],
   "hh":  ["hobarthurricanes", "hurricanes"],
   "st":  ["sydneythunder", "thunder"],
-
-  // 7. SA20 (South Africa T20)
   "sec": ["sunriserseasterncape", "sec", "sunrisers"],
   "pr":  ["paarlroyals", "pr", "paarl"],
   "mi-ct": ["micapetown", "mict", "capetown"],
   "joh": ["joburgsuperkings", "jsk", "joburg"],
   "dsg": ["durbanssupergiants", "dsg", "durban"],
   "pc":  ["pretoriacapitals", "pc", "pretoria"],
-
-  // 8. Caribbean Premier League (CPL & WCPL)
   "tkr": ["trinbagoknightriders", "tkr", "trinbago"],
   "br":  ["barbadosroyals", "br", "barbados"],
   "gaw": ["guyanaamazonwarriors", "gaw", "guyana", "warriors"],
   "sknp":["stkittsnevispatriots", "sknp", "patriots"],
   "slk": ["stluciakings", "slk", "stlucia"],
   "abf": ["antiguabarbuda falcons", "falcons", "abf"],
-
-  // 9. Major League Cricket (MLC - USA)
   "miny": ["minewyork", "miny", "newyork"],
   "tsr":  ["texassuperkings", "tsk", "texas"],
   "seo":  ["seattleorcas", "orcas", "seattle"],
   "wfr":  ["washingtonfreedom", "freedom", "washington"],
   "lar":  ["losangelesknightriders", "lakr", "losangeles"],
   "sf":   ["sanfranciscounicorns", "unicorns", "sanfrancisco"],
-
-  // 10. International League T20 (ILT20 - UAE)
   "miev": ["miemirates", "miev", "emirates"],
   "adkr": ["abudhabiknightriders", "adkr", "abudhabi"],
   "dv":   ["desertvipers", "vipers"],
   "gg-ae":["gulfgiants", "giants"],
   "sw":   ["sharjahwarriors", "warriors"],
   "dc-ae":["dubai capitals", "dubaicapitals"],
-
-  // 11. The Hundred (England)
   "bp":  ["birminghamphoenix", "phoenix"],
   "ls":  ["londonspirit", "spirit"],
   "mo":  ["manchesteroriginals", "originals"],
@@ -182,8 +158,6 @@ const TEAM_ALIASES = {
   "sb":  ["southernbrave", "brave"],
   "tr":  ["trentrockets", "rockets"],
   "wf":  ["welshfire", "fire"],
-
-  // 12. Super Smash (New Zealand)
   "auk": ["aucklandaces", "auckland", "aces"],
   "can-nz": ["canterburykings", "canterbury"],
   "cd":  ["centralstags", "stags"],
@@ -229,10 +203,10 @@ function fmtInning(sc, defaultMaxOvers) {
   return `${runs}${wkts}${oversStr}`.trim();
 }
 
-// డైనమిక్ టైమ్‌జోన్ ఫార్మాటర్ (IST లేదా అభ్యర్థించిన ప్రాంతపు టైమ్‌జోన్ కోడ్‌తో)
-function formatFinishedTimeWithZone(dateObj, tzStr) {
+// యూజర్ డివైస్ టైమ్‌జోన్ ఆధారంగా లోకల్ టైమ్ & జోన్ కోడ్ (IST) ఇచ్చే ఫంక్షన్
+function formatLocalFinishedTime(dateObj, tzStr) {
   try {
-    const targetZone = tzStr || "Asia/Kolkata"; // డీఫాల్ట్‌గా IST
+    const targetZone = tzStr || "Asia/Kolkata";
     const options = {
       day: '2-digit',
       month: 'short',
@@ -250,16 +224,14 @@ function formatFinishedTimeWithZone(dateObj, tzStr) {
 }
 
 // =========================================================================
-// 3. COMPLETE LIVE SCORE ROUTE (DYNAMIC TIMEZONE & IST FORMATTER)
+// 3. COMPLETE LIVE SCORE ROUTE
 // =========================================================================
 app.get('/api/fetch-score', async (req, res) => {
   const target = req.query.id || "";
   const apiKey = req.query.apikey || "";
   const t1Query = (req.query.t1 || "").trim();
   const t2Query = (req.query.t2 || "").trim();
-  
-  // యూజర్ టైమ్‌జోన్ (క్లయింట్ నుండి వస్తే తీసుకుంటుంది, లేకుంటే ఆటోమేటిక్‌గా Asia/Kolkata - IST)
-  const clientTz = req.query.tz || "Asia/Kolkata";
+  const clientTz = req.query.tz || "Asia/Kolkata"; // డీఫాల్ట్‌గా IST
 
   if (!target) {
     return res.status(400).json({ success: false, message: "Missing id/url parameter" });
@@ -334,7 +306,7 @@ app.get('/api/fetch-score', async (req, res) => {
                 const outT2 = t2Query || t2Name;
 
                 const now = new Date();
-                const formattedTime = formatFinishedTimeWithZone(now, clientTz);
+                const formattedTime = formatLocalFinishedTime(now, clientTz);
                 const finalNotice = isFinished ? `${statusText} • Finished on ${formattedTime}` : statusText;
 
                 return res.json({
@@ -363,7 +335,7 @@ app.get('/api/fetch-score', async (req, res) => {
     }
 
     // -------------------------------------------------------------
-    // B. CRICBUZZ HANDLER (విశ్వసనీయ OVERS, STATUS & IST TIMEZONE FIX)
+    // B. CRICBUZZ HANDLER (విశ్వసనీయ OVERS, STATUS & LOCAL TIMEZONE FIX)
     // -------------------------------------------------------------
     if (target.includes("cricbuzz.com") || /^\d{5,7}$/.test(target)) {
       let cbMatchId = target;
@@ -456,9 +428,9 @@ app.get('/api/fetch-score', async (req, res) => {
               targetEq = `${chasingTeam} need ${minScore.remRuns} runs in ${minScore.remBalls} balls`;
             }
 
-            // టైమ్‌జోన్ ఫార్మాట్ (IST)
+            // యూజర్ డివైస్ టైమ్‌జోన్ ఫార్మాట్ (IST)
             const now = new Date();
-            const formattedTime = formatFinishedTimeWithZone(now, clientTz);
+            const formattedTime = formatLocalFinishedTime(now, clientTz);
             const formattedNotice = isFinished 
               ? `${statusText} • Finished on ${formattedTime}`
               : (targetEq || statusText);
@@ -542,7 +514,7 @@ app.get('/api/fetch-score', async (req, res) => {
             const isLive = !isFinished && statusText.toLowerCase().includes("need");
 
             const now = new Date();
-            const formattedTime = formatFinishedTimeWithZone(now, clientTz);
+            const formattedTime = formatLocalFinishedTime(now, clientTz);
             const formattedNotice = isFinished 
               ? `${statusText || 'New Zealand won by 87 runs'} • Finished on ${formattedTime}`
               : statusText;
@@ -614,7 +586,7 @@ app.get('/api/fetch-score', async (req, res) => {
           }
 
           const now = new Date();
-          const formattedTime = formatFinishedTimeWithZone(now, clientTz);
+          const formattedTime = formatLocalFinishedTime(now, clientTz);
           return res.json({
             success: true,
             source: "cricapi",
