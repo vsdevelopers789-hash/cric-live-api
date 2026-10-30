@@ -230,7 +230,7 @@ function fmtInning(sc, defaultMaxOvers) {
 }
 
 // =========================================================================
-// 3. COMPLETE LIVE SCORE ROUTE (STRICT BOOLEAN & ACCURATE TARGET FIX)
+// 3. COMPLETE LIVE SCORE ROUTE (PURE ISO DATE & STRICT BOOLEAN)
 // =========================================================================
 app.get('/api/fetch-score', async (req, res) => {
   const target = req.query.id || "";
@@ -321,7 +321,7 @@ app.get('/api/fetch-score', async (req, res) => {
                   t2_img: getTeamFlagUrl(outT2),
                   t1_score: s1,
                   t2_score: s2,
-                  statusNotice: isFinished ? `${statusText} • Finished on ${new Date().toLocaleDateString('en-GB')}` : statusText,
+                  statusNotice: statusText,
                   dynamicBadge: dynamicBadge,
                   targetEquation: statusText,
                   isLive: isLive,
@@ -378,7 +378,7 @@ app.get('/api/fetch-score', async (req, res) => {
 
             let s1 = "", s2 = "";
 
-            // 1. inningsScoreList నుండి రెండు జట్ల ఖచ్చితమైన ఇన్నింగ్స్ స్కోర్లు & ఓవర్లు
+            // 1. inningsScoreList నుండి రెండు జట్ల ఇన్నింగ్స్ స్కోర్లు & ఓవర్లు
             const inningsList = minScore.matchScoreDetails?.inningsScoreList || [];
             inningsList.forEach(sc => {
               const scStr = fmtInning(sc, defaultMaxOvers);
@@ -417,7 +417,6 @@ app.get('/api/fetch-score', async (req, res) => {
             const isFinished = state === "complete" || statusText.toLowerCase().includes("won by") || statusText.toLowerCase().includes("beat") || (s1 && s2 && inningsList.length >= 2 && !minScore.remRuns);
             const isLive = !isFinished && (state === "inprogress" || state === "innings break");
 
-            // విన్నింగ్ రిజల్ట్ సరిచేయడం
             if (isFinished && (!statusText || statusText.toLowerCase().includes("complete"))) {
               statusText = `${outT2} won by 87 runs`;
             }
@@ -430,11 +429,6 @@ app.get('/api/fetch-score', async (req, res) => {
               targetEq = `${chasingTeam} need ${minScore.remRuns} runs in ${minScore.remBalls} balls`;
             }
 
-            const now = new Date();
-            const formattedFinishedNotice = isFinished 
-              ? `${statusText} • Finished on ${now.toLocaleDateString('en-GB')}`
-              : (targetEq || statusText);
-
             payload = {
               success: true,
               source: "cricbuzz",
@@ -446,12 +440,12 @@ app.get('/api/fetch-score', async (req, res) => {
               t2_img: getTeamFlagUrl(outT2),
               t1_score: s1,
               t2_score: s2,
-              statusNotice: formattedFinishedNotice,
+              statusNotice: statusText,
               dynamicBadge: dynamicBadge,
               targetEquation: targetEq || statusText,
-              isLive: isLive,
-              isFinished: isFinished === true,
-              calculatedFinishedDate: isFinished ? now.toISOString() : null
+              isLive: Boolean(isLive),
+              isFinished: Boolean(isFinished),
+              calculatedFinishedDate: isFinished ? new Date().toISOString() : null
             };
           }
         }
@@ -513,11 +507,6 @@ app.get('/api/fetch-score', async (req, res) => {
             const isFinished = statusText.toLowerCase().includes("won by") || statusText.toLowerCase().includes("beat") || (s1 && s2);
             const isLive = !isFinished && statusText.toLowerCase().includes("need");
 
-            const now = new Date();
-            const formattedFinishedNotice = isFinished 
-              ? `${statusText || 'New Zealand won by 87 runs'} • Finished on ${now.toLocaleDateString('en-GB')}`
-              : statusText;
-
             payload = {
               success: true,
               source: "cricbuzz",
@@ -529,12 +518,12 @@ app.get('/api/fetch-score', async (req, res) => {
               t2_img: getTeamFlagUrl(outT2),
               t1_score: s1,
               t2_score: s2,
-              statusNotice: formattedFinishedNotice,
+              statusNotice: statusText || "New Zealand won by 87 runs",
               dynamicBadge: isFinished ? "MATCH ENDED" : (isLive ? "2ND INNINGS" : "LIVE"),
               targetEquation: statusText || payload?.targetEquation || "",
-              isLive: isLive,
-              isFinished: isFinished === true,
-              calculatedFinishedDate: isFinished ? now.toISOString() : null
+              isLive: Boolean(isLive),
+              isFinished: Boolean(isFinished),
+              calculatedFinishedDate: isFinished ? new Date().toISOString() : null
             };
           }
         } catch (e) {}
@@ -584,7 +573,6 @@ app.get('/api/fetch-score', async (req, res) => {
             targetEq = d.status;
           }
 
-          const now = new Date();
           return res.json({
             success: true,
             source: "cricapi",
@@ -596,12 +584,12 @@ app.get('/api/fetch-score', async (req, res) => {
             t2_img: getTeamFlagUrl(targetT2),
             t1_score: s1,
             t2_score: s2,
-            statusNotice: isFinished ? `${d.status} • Finished on ${now.toLocaleDateString('en-GB')}` : (d.status || ""),
+            statusNotice: d.status || "",
             dynamicBadge: badge,
             targetEquation: targetEq || d.status || "",
-            isLive: isLive,
-            isFinished: isFinished === true,
-            calculatedFinishedDate: isFinished ? now.toISOString() : null
+            isLive: Boolean(isLive),
+            isFinished: Boolean(isFinished),
+            calculatedFinishedDate: isFinished ? new Date().toISOString() : null
           });
         }
       }
