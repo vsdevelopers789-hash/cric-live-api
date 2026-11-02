@@ -24,7 +24,7 @@ let DYNAMIC_COUNTRY_CDN_MAP = {
   "zimbabwe": `${CRICAPI_FLAG_CDN_BASE}/zw.svg`, "zim": `${CRICAPI_FLAG_CDN_BASE}/zw.svg`, "zimw": `${CRICAPI_FLAG_CDN_BASE}/zw.svg`,
   "ireland": `${CRICAPI_FLAG_CDN_BASE}/ie.svg`, "ire": `${CRICAPI_FLAG_CDN_BASE}/ie.svg`, "irew": `${CRICAPI_FLAG_CDN_BASE}/ie.svg`,
 
-  // --- Major Associate & ICC Members Across World ---
+  // --- Associate & Global Members ---
   "scotland": `${CRICAPI_FLAG_CDN_BASE}/gb-sct.svg`, "sco": `${CRICAPI_FLAG_CDN_BASE}/gb-sct.svg`, "scow": `${CRICAPI_FLAG_CDN_BASE}/gb-sct.svg`,
   "netherlands": `${CRICAPI_FLAG_CDN_BASE}/nl.svg`, "ned": `${CRICAPI_FLAG_CDN_BASE}/nl.svg`,
   "usa": `${CRICAPI_FLAG_CDN_BASE}/us.svg`, "unitedstates": `${CRICAPI_FLAG_CDN_BASE}/us.svg`,
@@ -84,7 +84,6 @@ async function preloadCricapiCountries() {
             }
           }
         });
-        console.log("CricAPI SVG Countries Flags successfully cached into engine!");
       }
     }
   } catch (e) {
@@ -142,66 +141,7 @@ const TEAM_ALIASES = {
   "rr":  ["rajasthanroyals", "rr", "rajasthan"],
   "pbks":["punjabkings", "pbks", "punjab", "kxip"],
   "gt":  ["gujarattitans", "gt", "gujarat"],
-  "lsg": ["lucknowsupergiants", "lsg", "lucknow"],
-
-  "dcw": ["delhicapitalswomen", "dcwomen", "dcw"],
-  "miw": ["mumbaiindianswomen", "miwomen", "miw"],
-  "rcbw":["royalchallengersbengaluruwomen", "rcbwomen", "rcbw"],
-  "ggw": ["gujaratgiants", "gujaratgiantswomen", "gg", "ggw"],
-  "upw": ["upwarriorz", "upwarriorzwomen", "upw"],
-
-  "lq":  ["lahoreqalandars", "lq", "lahore"],
-  "kk":  ["karachikings", "kk", "karachi"],
-  "islu":["islamabadunited", "iu", "islu", "islamabad"],
-  "pz":  ["peshawarzalmi", "pz", "peshawar"],
-  "ms":  ["multansultans", "ms", "multan"],
-  "qg":  ["quettagladiators", "qg", "quetta"],
-
-  "ps":  ["perthscorchers", "ps", "scorchers"],
-  "ss":  ["sydneysixers", "ss", "sixers"],
-  "msb": ["melbournestars", "stars"],
-  "mr":  ["melbournerenegades", "renegades"],
-  "bh":  ["brisbaneheat", "heat"],
-  "as":  ["adelaidestrikers", "strikers"],
-  "hh":  ["hobarthurricanes", "hurricanes"],
-  "st":  ["sydneythunder", "thunder"],
-
-  "sec": ["sunriserseasterncape", "sec", "sunrisers"],
-  "pr":  ["paarlroyals", "pr", "paarl"],
-  "mi-ct": ["micapetown", "mict", "capetown"],
-  "joh": ["joburgsuperkings", "jsk", "joburg"],
-  "dsg": ["durbanssupergiants", "dsg", "durban"],
-  "pc":  ["pretoriacapitals", "pc", "pretoria"],
-
-  "tkr": ["trinbagoknightriders", "tkr", "trinbago"],
-  "br":  ["barbadosroyals", "br", "barbados"],
-  "gaw": ["guyanaamazonwarriors", "gaw", "guyana", "warriors"],
-  "sknp":["stkittsnevispatriots", "sknp", "patriots"],
-  "slk": ["stluciakings", "slk", "stlucia"],
-  "abf": ["antiguabarbuda falcons", "falcons", "abf"],
-
-  "miny": ["minewyork", "miny", "newyork"],
-  "tsr":  ["texassuperkings", "tsk", "texas"],
-  "seo":  ["seattleorcas", "orcas", "seattle"],
-  "wfr":  ["washingtonfreedom", "freedom", "washington"],
-  "lar":  ["losangelesknightriders", "lakr", "losangeles"],
-  "sf":   ["sanfranciscounicorns", "unicorns", "sanfrancisco"],
-
-  "miev": ["miemirates", "miev", "emirates"],
-  "adkr": ["abudhabiknightriders", "adkr", "abudhabi"],
-  "dv":   ["desertvipers", "vipers"],
-  "gg-ae":["gulfgiants", "giants"],
-  "sw":   ["sharjahwarriors", "warriors"],
-  "dc-ae":["dubai capitals", "dubaicapitals"],
-
-  "bp":  ["birminghamphoenix", "phoenix"],
-  "ls":  ["londonspirit", "spirit"],
-  "mo":  ["manchesteroriginals", "originals"],
-  "nsc": ["northernsuperchargers", "superchargers"],
-  "ov":  ["ovalinvincibles", "invincibles"],
-  "sb":  ["southernbrave", "brave"],
-  "tr":  ["trentrockets", "rockets"],
-  "wf":  ["welshfire", "fire"]
+  "lsg": ["lucknowsupergiants", "lsg", "lucknow"]
 };
 
 function getTeamFlagUrl(teamName) {
@@ -264,7 +204,7 @@ function fmtInning(sc, defaultMaxOvers) {
   return `${runs}${wkts}${oversStr}`.trim();
 }
 
-// మ్యాప్‌ల నుండి వాలిడ్ ISO Start Time ను రూపొందించే సహాయక ఫంక్షన్
+// తేదీని ఖచ్చితమైన ISO కు మార్చే ఫంక్షన్
 function parseToIsoDate(rawVal) {
   if (!rawVal) return "";
   try {
@@ -282,8 +222,9 @@ function parseToIsoDate(rawVal) {
   return "";
 }
 
+// ప్లేయింగ్ సమయం + అదనంగా 3 గంటలు కలిపే లాజిక్
 function calculateSeriesSmartTime(startDateVal, seriesOrFormatText, isFinished) {
-  if (!startDateVal) return new Date().toISOString();
+  if (!startDateVal) return "";
   try {
     let startEpoch = 0;
     if (typeof startDateVal === 'number' || /^\d{10,13}$/.test(String(startDateVal).trim())) {
@@ -293,7 +234,7 @@ function calculateSeriesSmartTime(startDateVal, seriesOrFormatText, isFinished) 
       startEpoch = new Date(startDateVal).getTime();
     }
 
-    if (!startEpoch || isNaN(startEpoch)) return new Date().toISOString();
+    if (!startEpoch || isNaN(startEpoch)) return "";
 
     if (!isFinished) {
       return new Date(startEpoch).toISOString();
@@ -315,12 +256,12 @@ function calculateSeriesSmartTime(startDateVal, seriesOrFormatText, isFinished) 
 
     return new Date(startEpoch + totalExtraMs).toISOString();
   } catch (e) {
-    return new Date().toISOString();
+    return "";
   }
 }
 
 // =========================================================================
-// 3. COMPLETE LIVE SCORE ROUTE (INCLUDES PURE MATCH START TIME)
+// 3. COMPLETE LIVE SCORE ROUTE (ACCURATE DATE EXTRACTION)
 // =========================================================================
 app.get('/api/fetch-score', async (req, res) => {
   const target = req.query.id || "";
@@ -401,7 +342,6 @@ app.get('/api/fetch-score', async (req, res) => {
                 const outT2 = t2Query || t2Name;
                 const seriesTitle = m.series?.name || m.series?.longName || "";
 
-                // మ్యాచ్ ప్రారంభ సమయం
                 const rawStart = m.startDate || m.startTime || m.startDateTime;
                 const matchStartTimeIso = parseToIsoDate(rawStart);
                 const calculatedFinishedIso = calculateSeriesSmartTime(rawStart, seriesTitle, isFinished);
@@ -435,7 +375,7 @@ app.get('/api/fetch-score', async (req, res) => {
     }
 
     // -------------------------------------------------------------
-    // B. CRICBUZZ HANDLER
+    // B. CRICBUZZ HANDLER (ACCURATE PARALLEL ENGINE & SCRAPER)
     // -------------------------------------------------------------
     if (target.includes("cricbuzz.com") || /^\d{5,7}$/.test(target)) {
       let cbMatchId = target;
@@ -478,13 +418,11 @@ app.get('/api/fetch-score', async (req, res) => {
           minScore = cbJson.miniscore || {};
         }
 
-        // Match Info API నుండి ప్రారంభ సమయం
         if (infoResp.status === "fulfilled" && infoResp.value.ok) {
           const infoJson = await infoResp.value.json();
           rawStart = infoJson.matchInfo?.startDate || infoJson.startDate || infoJson.matchStartTimestamp || infoJson.matchInfo?.matchStartTimestamp;
         }
 
-        // Info లో రాకపోతే కామెంట్రీ హెడర్ నుండి ప్రారంభ సమయం
         if (!rawStart) {
           rawStart = mHeader.startDate || mHeader.matchStartTimestamp || cbJson.matchStartTimestamp;
         }
@@ -540,10 +478,6 @@ app.get('/api/fetch-score', async (req, res) => {
           const isFinished = state === "complete" || statusText.toLowerCase().includes("won by") || statusText.toLowerCase().includes("beat") || (s1 && s2 && inningsList.length >= 2 && !minScore.remRuns);
           const isLive = !isFinished && (state === "inprogress" || state === "innings break");
 
-          if (isFinished && (!statusText || statusText.toLowerCase().includes("complete"))) {
-            statusText = `${outT2} won by 87 runs`;
-          }
-
           let dynamicBadge = isFinished ? "MATCH ENDED" : (statusText.toLowerCase().includes("innings break") ? "INNINGS BREAK" : (s1 && s2 ? "2ND INNINGS" : "1ST INNINGS"));
 
           let targetEq = statusText;
@@ -579,8 +513,8 @@ app.get('/api/fetch-score', async (req, res) => {
         }
       } catch (e) {}
 
-      // బ్యాకప్ ఫాల్‌బ్యాక్
-      if (!payload || !payload.t1_score) {
+      // బ్యాకప్ వెబ్ స్క్రాపర్ (ఖచ్చితమైన తేదీ & సమయాన్ని కనుగొనడం)
+      if (!payload || !payload.t1_score || !payload.startTimeGMT) {
         try {
           const targetWebUrl = target.includes("http") ? target : `https://www.cricbuzz.com/live-cricket-scores/${cbMatchId}`;
           const htmlRes = await fetch(targetWebUrl, {
@@ -592,13 +526,40 @@ app.get('/api/fetch-score', async (req, res) => {
 
           if (htmlRes.ok) {
             let html = await htmlRes.text();
+            
+            // 1. JSON-LD లో అసలైన Match Start Time ఎక్స్‌ట్రాక్షన్
+            let finalStartEpoch = null;
+            const ldMatch = html.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/i);
+            if (ldMatch && ldMatch[1]) {
+              try {
+                const parsedLd = JSON.parse(ldMatch[1]);
+                if (parsedLd.startDate) {
+                  finalStartEpoch = new Date(parsedLd.startDate).getTime();
+                }
+              } catch(e) {}
+            }
+
+            // 2. data-start-time / schedule timestamp స్క్రాపింగ్
+            if (!finalStartEpoch) {
+              const tsMatch = html.match(/(?:data-start-time|matchStartTimestamp)="(\d+)"/i) 
+                           || html.match(/"startDate":"([^"]+)"/i)
+                           || html.match(/"header":\{[^}]*"startTime":"?(\d+)"?/i);
+              if (tsMatch && tsMatch[1]) {
+                finalStartEpoch = tsMatch[1].length === 10 ? parseInt(tsMatch[1]) * 1000 : (isNaN(tsMatch[1]) ? new Date(tsMatch[1]).getTime() : parseInt(tsMatch[1]));
+              }
+            }
+
+            // 3. UI టెక్స్ట్ సమయాన్ని గుర్తించడం (ఉదా: 12:30 PM ( October 30 ))
+            if (!finalStartEpoch) {
+              const txtDateMatch = html.match(/(\d{1,2}:\d{2}\s*(?:AM|PM))\s*\(\s*([A-Za-z]+\s*\d{1,2})\s*\)/i);
+              if (txtDateMatch) {
+                const curYear = new Date().getFullYear();
+                const rawParsed = new Date(`${txtDateMatch[2]} ${curYear} ${txtDateMatch[1]} +05:30`).getTime();
+                if (!isNaN(rawParsed)) finalStartEpoch = rawParsed;
+              }
+            }
+
             const cleanHtmlHead = html.substring(0, 15000);
-
-            // HTML లో టైమ్‌స్టాంప్ వెతకడం
-            let htmlStartEpoch = null;
-            const timeMatch = cleanHtmlHead.match(/itemprop="startDate"\s+content="([^"]+)"/i) || cleanHtmlHead.match(/data-start-time="([^"]+)"/i);
-            if (timeMatch && timeMatch[1]) htmlStartEpoch = timeMatch[1];
-
             let statusText = "";
             const stMatch = cleanHtmlHead.match(/<div[^>]*class="[^"]*(?:cb-min-stts|cb-text-complete|cb-text-live|cb-text-inprogress)[^"]*"[^>]*>([^<]+)<\/div>/i);
             if (stMatch && stMatch[1]) statusText = stMatch[1].trim();
@@ -640,9 +601,8 @@ app.get('/api/fetch-score', async (req, res) => {
             const isFinished = statusText.toLowerCase().includes("won by") || statusText.toLowerCase().includes("beat") || (s1 && s2);
             const isLive = !isFinished && statusText.toLowerCase().includes("need");
 
-            const finalFallbackStart = htmlStartEpoch || (Date.now() - (6.5 * 3600 * 1000));
-            const matchStartTimeIso = parseToIsoDate(finalFallbackStart);
-            const calculatedFinishedIso = calculateSeriesSmartTime(finalFallbackStart, seriesName, isFinished);
+            const matchStartTimeIso = finalStartEpoch ? parseToIsoDate(finalStartEpoch) : (payload?.startTimeGMT || "");
+            const calculatedFinishedIso = finalStartEpoch ? calculateSeriesSmartTime(finalStartEpoch, seriesName, isFinished) : (payload?.calculatedFinishedDate || "");
 
             payload = {
               success: true,
@@ -655,7 +615,7 @@ app.get('/api/fetch-score', async (req, res) => {
               t2_img: getTeamFlagUrl(outT2),
               t1_score: s1,
               t2_score: s2,
-              statusNotice: statusText || "New Zealand won by 87 runs",
+              statusNotice: statusText || payload?.statusNotice || "",
               dynamicBadge: isFinished ? "MATCH ENDED" : (isLive ? "2ND INNINGS" : "LIVE"),
               targetEquation: statusText || payload?.targetEquation || "",
               isLive: Boolean(isLive),
@@ -713,7 +673,6 @@ app.get('/api/fetch-score', async (req, res) => {
             targetEq = d.status;
           }
 
-          // CricAPI స్టార్ట్ టైమ్ ఫీల్డ్స్ (dateTimeGMT లేదా date)
           const rawCricStart = d.dateTimeGMT || d.date || d.matchStartTimestamp;
           const matchStartTimeIso = parseToIsoDate(rawCricStart);
           const calculatedFinishedIso = calculateSeriesSmartTime(rawCricStart, d.name, isFinished);
