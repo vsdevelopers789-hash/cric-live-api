@@ -204,7 +204,6 @@ function fmtInning(sc, defaultMaxOvers) {
   return `${runs}${wkts}${oversStr}`.trim();
 }
 
-// తేదీని ఖచ్చితమైన ISO కు మార్చే ఫంక్షన్
 function parseToIsoDate(rawVal) {
   if (!rawVal) return "";
   try {
@@ -222,7 +221,6 @@ function parseToIsoDate(rawVal) {
   return "";
 }
 
-// ప్లేయింగ్ సమయం + అదనంగా 3 గంటలు కలిపే లాజిక్
 function calculateSeriesSmartTime(startDateVal, seriesOrFormatText, isFinished) {
   if (!startDateVal) return "";
   try {
@@ -261,7 +259,7 @@ function calculateSeriesSmartTime(startDateVal, seriesOrFormatText, isFinished) 
 }
 
 // =========================================================================
-// 3. COMPLETE LIVE SCORE ROUTE (ACCURATE DATE EXTRACTION)
+// 3. COMPLETE LIVE SCORE ROUTE (WON BY / BALLS REMAINING ACCURATE PARSING)
 // =========================================================================
 app.get('/api/fetch-score', async (req, res) => {
   const target = req.query.id || "";
@@ -321,10 +319,10 @@ app.get('/api/fetch-score', async (req, res) => {
               const data = await resp.json();
               if (data.match) {
                 const m = data.match;
-                const statusText = m.statusText || "";
+                let statusText = m.statusText || m.resultNote || "";
                 const state = (m.stage || m.state || "").toLowerCase();
-                const isFinished = state === "finished" || state === "complete" || m.status === "post";
-                const isLive = state === "live" || state === "in_progress" || state === "mid";
+                const isFinished = state === "finished" || state === "complete" || m.status === "post" || statusText.toLowerCase().includes("won by");
+                const isLive = !isFinished && (state === "live" || state === "in_progress" || state === "mid");
 
                 const teams = m.teams || [];
                 const t1Data = teams[0] || {};
@@ -375,7 +373,7 @@ app.get('/api/fetch-score', async (req, res) => {
     }
 
     // -------------------------------------------------------------
-    // B. CRICBUZZ HANDLER (ACCURATE PARALLEL ENGINE & SCRAPER)
+    // B. CRICBUZZ HANDLER (WON BY / BALLS REMAINING ACCURATE PARSING)
     // -------------------------------------------------------------
     if (target.includes("cricbuzz.com") || /^\d{5,7}$/.test(target)) {
       let cbMatchId = target;
@@ -411,6 +409,7 @@ app.get('/api/fetch-score', async (req, res) => {
         let minScore = {};
         let cbJson = {};
         let rawStart = null;
+        let infoJson = {};
 
         if (commResp.status === "fulfilled" && commResp.value.ok) {
           cbJson = await commResp.value.json();
@@ -419,7 +418,7 @@ app.get('/api/fetch-score', async (req, res) => {
         }
 
         if (infoResp.status === "fulfilled" && infoResp.value.ok) {
-          const infoJson = await infoResp.value.json();
+          infoJson = await infoResp.value.json();
           rawStart = infoJson.matchInfo?.startDate || infoJson.startDate || infoJson.matchStartTimestamp || infoJson.matchInfo?.matchStartTimestamp;
         }
 
@@ -428,16 +427,20 @@ app.get('/api/fetch-score', async (req, res) => {
         }
 
         if (cbJson && (cbJson.matchHeader || Object.keys(mHeader).length > 0)) {
-          let statusText = mHeader.status || cbJson.status || "";
-          const state = (mHeader.state || "").toLowerCase();
+          // 1. ఖచ్చితమైన స్టేటస్ టెక్స్ట్ వెలికితీత (won by, left balls మొదలైనవి)
+          let statusText = mHeader.status || cbJson.status || infoJson.status || "";
+          
+          if (!statusText && minScore.matchScoreDetails?.customStatus) {
+            statusText = minScore.matchScoreDetails.customStatus;
+          }
 
+          const state = (mHeader.state || "").toLowerCase();
           const t1Name = mHeader.team1?.name || mHeader.team1?.sName || "";
           const t2Name = mHeader.team2?.name || mHeader.team2?.sName || "";
           const outT1 = t1Query || t1Name;
           const outT2 = t2Query || t2Name;
 
           let seriesName = mHeader.seriesName || mHeader.seriesDesc || (mHeader.series && mHeader.series.name) || detectedSeries || "";
-
           const formatStr = (mHeader.matchFormat || "").toLowerCase();
           const defaultMaxOvers = formatStr.includes("t20") ? "20" : (formatStr.includes("odi") ? "50" : "");
 
@@ -475,16 +478,31 @@ app.get('/api/fetch-score', async (req, res) => {
           if (s1 && !s1.includes("(") && defaultMaxOvers) s1 += ` (${defaultMaxOvers} ov)`;
           if (s2 && !s2.includes("(") && defaultMaxOvers) s2 += ` (${defaultMaxOvers} ov)`;
 
-          const isFinished = state === "complete" || statusText.toLowerCase().includes("won by") || statusText.toLowerCase().includes("beat") || (s1 && s2 && inningsList.length >= 2 && !minScore.remRuns);
+          const statusLower = statusText.toLowerCase();
+          const isFinished = state === "complete" || statusLower.includes("won by") || statusLower.includes("beat") || (s1 && s2 && inningsList.length >= 2 && !minScore.remRuns);
           const isLive = !isFinished && (state === "inprogress" || state === "innings break");
 
-          let dynamicBadge = isFinished ? "MATCH ENDED" : (statusText.toLowerCase().includes("innings break") ? "INNINGS BREAK" : (s1 && s2 ? "2ND INNINGS" : "1ST INNINGS"));
-
+          // 2. విన్నింగ్ వివరాలు (won with balls remaining)
           let targetEq = statusText;
-          if (!isFinished && minScore.remRuns && minScore.remBalls) {
+          if (isFinished) {
+            // ఒకవేళ మ్యాచ్ ముగిసిన తర్వాత కూడా left balls వివరాలుంటే చేర్చడం
+            if (minScore.ballsRemaining || minScore.remBalls) {
+              const bLeft = minScore.ballsRemaining || minScore.remBalls;
+              if (!statusText.includes("balls remaining") && !statusText.includes("left")) {
+                statusText += ` (with ${bLeft} balls remaining)`;
+              }
+            }
+            targetEq = statusText;
+          } else if (minScore.remRuns !== undefined && minScore.remBalls !== undefined && minScore.remRuns !== null) {
+            // లైవ్ మ్యాచ్ ఛేజింగ్ ఈక్వేషన్
             const chasingTeam = minScore.batTeam?.teamName || outT1;
             targetEq = `${chasingTeam} need ${minScore.remRuns} runs in ${minScore.remBalls} balls`;
+            if (!statusText || statusText.toLowerCase().includes("in progress")) {
+              statusText = targetEq;
+            }
           }
+
+          let dynamicBadge = isFinished ? "MATCH ENDED" : (statusLower.includes("innings break") ? "INNINGS BREAK" : (s1 && s2 ? "2ND INNINGS" : "1ST INNINGS"));
 
           const matchStartTimeIso = parseToIsoDate(rawStart);
           const calculatedFinishedIso = calculateSeriesSmartTime(rawStart, seriesName + " " + formatStr, isFinished);
@@ -513,8 +531,8 @@ app.get('/api/fetch-score', async (req, res) => {
         }
       } catch (e) {}
 
-      // బ్యాకప్ వెబ్ స్క్రాపర్ (ఖచ్చితమైన తేదీ & సమయాన్ని కనుగొనడం)
-      if (!payload || !payload.t1_score || !payload.startTimeGMT) {
+      // బ్యాకప్ స్క్రాపర్ (వెబ్ పేజీ నుండి status text ఎక్స్‌ట్రాక్ట్ చేయడం)
+      if (!payload || !payload.statusNotice || !payload.t1_score) {
         try {
           const targetWebUrl = target.includes("http") ? target : `https://www.cricbuzz.com/live-cricket-scores/${cbMatchId}`;
           const htmlRes = await fetch(targetWebUrl, {
@@ -526,20 +544,35 @@ app.get('/api/fetch-score', async (req, res) => {
 
           if (htmlRes.ok) {
             let html = await htmlRes.text();
-            
-            // 1. JSON-LD లో అసలైన Match Start Time ఎక్స్‌ట్రాక్షన్
+
+            // 1. స్టేటస్ నోటీస్ (won by X wkts / runs / left balls)
+            let scrapedStatus = "";
+            const statusPatterns = [
+              /<div[^>]*class="[^"]*(?:cb-text-complete|cb-text-live|cb-text-inprogress|cb-min-stts)[^"]*"[^>]*>([\s\S]*?)<\/div>/i,
+              /<div[^>]*class="[^"]*cb-col-100 cb-col cb-font-18 cb-text-bold[^"]*"[^>]*>([\s\S]*?)<\/div>/i,
+              /"status":"([^"]+)"/i
+            ];
+
+            for (const sp of statusPatterns) {
+              const matchSt = html.match(sp);
+              if (matchSt && matchSt[1]) {
+                const cleanSt = matchSt[1].replace(/<[^>]+>/g, '').trim();
+                if (cleanSt.length > 3 && !cleanSt.includes("{")) {
+                  scrapedStatus = cleanSt;
+                  break;
+                }
+              }
+            }
+
             let finalStartEpoch = null;
             const ldMatch = html.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/i);
             if (ldMatch && ldMatch[1]) {
               try {
                 const parsedLd = JSON.parse(ldMatch[1]);
-                if (parsedLd.startDate) {
-                  finalStartEpoch = new Date(parsedLd.startDate).getTime();
-                }
+                if (parsedLd.startDate) finalStartEpoch = new Date(parsedLd.startDate).getTime();
               } catch(e) {}
             }
 
-            // 2. data-start-time / schedule timestamp స్క్రాపింగ్
             if (!finalStartEpoch) {
               const tsMatch = html.match(/(?:data-start-time|matchStartTimestamp)="(\d+)"/i) 
                            || html.match(/"startDate":"([^"]+)"/i)
@@ -549,21 +582,7 @@ app.get('/api/fetch-score', async (req, res) => {
               }
             }
 
-            // 3. UI టెక్స్ట్ సమయాన్ని గుర్తించడం (ఉదా: 12:30 PM ( October 30 ))
-            if (!finalStartEpoch) {
-              const txtDateMatch = html.match(/(\d{1,2}:\d{2}\s*(?:AM|PM))\s*\(\s*([A-Za-z]+\s*\d{1,2})\s*\)/i);
-              if (txtDateMatch) {
-                const curYear = new Date().getFullYear();
-                const rawParsed = new Date(`${txtDateMatch[2]} ${curYear} ${txtDateMatch[1]} +05:30`).getTime();
-                if (!isNaN(rawParsed)) finalStartEpoch = rawParsed;
-              }
-            }
-
-            const cleanHtmlHead = html.substring(0, 15000);
-            let statusText = "";
-            const stMatch = cleanHtmlHead.match(/<div[^>]*class="[^"]*(?:cb-min-stts|cb-text-complete|cb-text-live|cb-text-inprogress)[^"]*"[^>]*>([^<]+)<\/div>/i);
-            if (stMatch && stMatch[1]) statusText = stMatch[1].trim();
-
+            const cleanHtmlHead = html.substring(0, 20000);
             let seriesName = detectedSeries;
             const navMatch = cleanHtmlHead.match(/class="[^"]*cb-nav-hdr[^"]*"[^>]*>[\s\S]*?<h1[^>]*>([\s\S]*?)<\/h1>/i);
             if (navMatch && navMatch[1]) {
@@ -598,8 +617,9 @@ app.get('/api/fetch-score', async (req, res) => {
             if (!s1 && extractedScores[0]) s1 = extractedScores[0].score;
             if (!s2 && extractedScores[1]) s2 = extractedScores[1].score;
 
-            const isFinished = statusText.toLowerCase().includes("won by") || statusText.toLowerCase().includes("beat") || (s1 && s2);
-            const isLive = !isFinished && statusText.toLowerCase().includes("need");
+            const finalStatusNotice = scrapedStatus || payload?.statusNotice || "";
+            const isFinished = finalStatusNotice.toLowerCase().includes("won by") || finalStatusNotice.toLowerCase().includes("beat") || (s1 && s2);
+            const isLive = !isFinished && finalStatusNotice.toLowerCase().includes("need");
 
             const matchStartTimeIso = finalStartEpoch ? parseToIsoDate(finalStartEpoch) : (payload?.startTimeGMT || "");
             const calculatedFinishedIso = finalStartEpoch ? calculateSeriesSmartTime(finalStartEpoch, seriesName, isFinished) : (payload?.calculatedFinishedDate || "");
@@ -615,9 +635,9 @@ app.get('/api/fetch-score', async (req, res) => {
               t2_img: getTeamFlagUrl(outT2),
               t1_score: s1,
               t2_score: s2,
-              statusNotice: statusText || payload?.statusNotice || "",
+              statusNotice: finalStatusNotice,
               dynamicBadge: isFinished ? "MATCH ENDED" : (isLive ? "2ND INNINGS" : "LIVE"),
-              targetEquation: statusText || payload?.targetEquation || "",
+              targetEquation: finalStatusNotice,
               isLive: Boolean(isLive),
               isFinished: Boolean(isFinished),
               startTimeGMT: matchStartTimeIso,
@@ -669,9 +689,7 @@ app.get('/api/fetch-score', async (req, res) => {
           else if (statusLower.includes("innings break")) badge = "INNINGS BREAK";
           else if (statusLower.includes("toss")) badge = "TOSS";
 
-          if (statusLower.includes("need") || statusLower.includes("won by")) {
-            targetEq = d.status;
-          }
+          targetEq = d.status || "";
 
           const rawCricStart = d.dateTimeGMT || d.date || d.matchStartTimestamp;
           const matchStartTimeIso = parseToIsoDate(rawCricStart);
@@ -690,7 +708,7 @@ app.get('/api/fetch-score', async (req, res) => {
             t2_score: s2,
             statusNotice: d.status || "",
             dynamicBadge: badge,
-            targetEquation: targetEq || d.status || "",
+            targetEquation: targetEq,
             isLive: Boolean(isLive),
             isFinished: Boolean(isFinished),
             startTimeGMT: matchStartTimeIso,
