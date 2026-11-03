@@ -10,7 +10,6 @@ app.use(cors());
 const CRICAPI_FLAG_CDN_BASE = "https://cdorg.b-cdn.net/flags";
 
 let DYNAMIC_COUNTRY_CDN_MAP = {
-  // --- ICC Full Members (Men & Women) ---
   "india": `${CRICAPI_FLAG_CDN_BASE}/in.svg`, "ind": `${CRICAPI_FLAG_CDN_BASE}/in.svg`, "indw": `${CRICAPI_FLAG_CDN_BASE}/in.svg`,
   "australia": `${CRICAPI_FLAG_CDN_BASE}/au.svg`, "aus": `${CRICAPI_FLAG_CDN_BASE}/au.svg`, "ausw": `${CRICAPI_FLAG_CDN_BASE}/au.svg`,
   "england": `${CRICAPI_FLAG_CDN_BASE}/gb-eng.svg`, "eng": `${CRICAPI_FLAG_CDN_BASE}/gb-eng.svg`, "engw": `${CRICAPI_FLAG_CDN_BASE}/gb-eng.svg`,
@@ -23,8 +22,6 @@ let DYNAMIC_COUNTRY_CDN_MAP = {
   "afghanistan": `${CRICAPI_FLAG_CDN_BASE}/af.svg`, "afg": `${CRICAPI_FLAG_CDN_BASE}/af.svg`,
   "zimbabwe": `${CRICAPI_FLAG_CDN_BASE}/zw.svg`, "zim": `${CRICAPI_FLAG_CDN_BASE}/zw.svg`, "zimw": `${CRICAPI_FLAG_CDN_BASE}/zw.svg`,
   "ireland": `${CRICAPI_FLAG_CDN_BASE}/ie.svg`, "ire": `${CRICAPI_FLAG_CDN_BASE}/ie.svg`, "irew": `${CRICAPI_FLAG_CDN_BASE}/ie.svg`,
-
-  // --- Associate & Global Members ---
   "scotland": `${CRICAPI_FLAG_CDN_BASE}/gb-sct.svg`, "sco": `${CRICAPI_FLAG_CDN_BASE}/gb-sct.svg`, "scow": `${CRICAPI_FLAG_CDN_BASE}/gb-sct.svg`,
   "netherlands": `${CRICAPI_FLAG_CDN_BASE}/nl.svg`, "ned": `${CRICAPI_FLAG_CDN_BASE}/nl.svg`,
   "usa": `${CRICAPI_FLAG_CDN_BASE}/us.svg`, "unitedstates": `${CRICAPI_FLAG_CDN_BASE}/us.svg`,
@@ -71,7 +68,7 @@ async function preloadCricapiCountries() {
 preloadCricapiCountries();
 
 // =========================================================================
-// 2. TEAM ALIASES & PARSERS
+// 2. TEAM ALIASES & UTILITY FUNCTIONS
 // =========================================================================
 const TEAM_ALIASES = {
   "ind": ["india", "ind", "indw", "indiaw", "indiawomen", "teamindia", "indians", "bcci"],
@@ -177,7 +174,6 @@ function parseToIsoDate(rawVal) {
   return "";
 }
 
-// ప్లేయింగ్ సమయం + అదనంగా 3 గంటలు
 function calculateSeriesSmartTime(startDateVal, seriesOrFormatText, isFinished) {
   if (!startDateVal) return "";
   try {
@@ -215,8 +211,20 @@ function calculateSeriesSmartTime(startDateVal, seriesOrFormatText, isFinished) 
   }
 }
 
+// స్కోర్ నుండి పరుగులు, వికెట్లు, ఓవర్లను పార్స్ చేసే ఫంక్షన్
+function parseScoreParts(scoreStr) {
+  if (!scoreStr) return { r: 0, w: 0, ov: 0 };
+  const m = String(scoreStr).match(/(\d+)(?:\/(\d+))?(?:\s*\(([\d\.]+)\s*ov\))?/i);
+  if (!m) return { r: 0, w: 0, ov: 0 };
+  return {
+    r: parseInt(m[1] || 0),
+    w: m[2] !== undefined ? parseInt(m[2]) : 10,
+    ov: parseFloat(m[3] || 0)
+  };
+}
+
 // =========================================================================
-// 3. COMPLETE LIVE SCORE ROUTE (START TIME + END TIME + WON BY / NEED)
+// 3. COMPLETE LIVE SCORE ROUTE
 // =========================================================================
 app.get('/api/fetch-score', async (req, res) => {
   const target = req.query.id || "";
@@ -229,9 +237,6 @@ app.get('/api/fetch-score', async (req, res) => {
   }
 
   try {
-    // -------------------------------------------------------------
-    // CRICBUZZ HANDLER
-    // -------------------------------------------------------------
     if (target.includes("cricbuzz.com") || /^\d{5,7}$/.test(target)) {
       let cbMatchId = target;
       const m = target.match(/(?:cricket-scores|live-cricket-scores|cricket-match-highlights)\/(\d+)/i) || target.match(/\/(\d+)/) || target.match(/\d{5,7}/);
@@ -266,12 +271,11 @@ app.get('/api/fetch-score', async (req, res) => {
         try { htmlText = await results[2].value.text(); } catch(e){}
       }
 
-      // 1. ఖచ్చితమైన ప్రారంభ సమయం (Start Time) ని గుర్తించడం
+      // 1. ఖచ్చితమైన ప్రారంభ సమయం
       rawStart = infoJson.matchInfo?.startDate || infoJson.startDate || infoJson.matchStartTimestamp || infoJson.matchInfo?.matchStartTimestamp 
               || mHeader.startDate || mHeader.matchStartTimestamp || cbJson.matchStartTimestamp;
 
       if (!rawStart && htmlText) {
-        // A. JSON-LD లో startDate
         const ldMatch = htmlText.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/i);
         if (ldMatch && ldMatch[1]) {
           try {
@@ -279,20 +283,10 @@ app.get('/api/fetch-score', async (req, res) => {
             if (parsedLd.startDate) rawStart = parsedLd.startDate;
           } catch(e) {}
         }
-        // B. HTML లోని timestamp
         if (!rawStart) {
           const tsMatch = htmlText.match(/(?:data-start-time|matchStartTimestamp)="(\d+)"/i) || htmlText.match(/"startDate":"([^"]+)"/i);
           if (tsMatch && tsMatch[1]) {
             rawStart = tsMatch[1].length === 10 ? parseInt(tsMatch[1]) * 1000 : (isNaN(tsMatch[1]) ? tsMatch[1] : parseInt(tsMatch[1]));
-          }
-        }
-        // C. వెబ్ పేజీ టెక్స్ట్ సమయం (ఉదా: 12:30 PM ( November 1 ))
-        if (!rawStart) {
-          const txtDateMatch = htmlText.match(/(\d{1,2}:\d{2}\s*(?:AM|PM))\s*\(\s*([A-Za-z]+\s*\d{1,2})\s*\)/i);
-          if (txtDateMatch) {
-            const curYear = new Date().getFullYear();
-            const rawParsed = new Date(`${txtDateMatch[2]} ${curYear} ${txtDateMatch[1]} +05:30`).getTime();
-            if (!isNaN(rawParsed)) rawStart = rawParsed;
           }
         }
       }
@@ -313,8 +307,8 @@ app.get('/api/fetch-score', async (req, res) => {
         }
       }
 
-      const outT1 = t1Query || t1Name || "IND";
-      const outT2 = t2Query || t2Name || "NZ";
+      const outT1 = t1Query || t1Name || "New Zealand";
+      const outT2 = t2Query || t2Name || "India";
 
       let formatStr = (mHeader.matchFormat || infoJson.matchInfo?.matchFormat || "").toLowerCase();
       if (!formatStr && htmlText) {
@@ -385,7 +379,7 @@ app.get('/api/fetch-score', async (req, res) => {
         }
       }
 
-      // 2. ఖచ్చితమైన స్టేటస్ (Won by / Left balls / Need)
+      // --- ఖచ్చితమైన స్టేటస్ / రిజల్ట్ ఎక్స్‌ట్రాక్షన్ ---
       let statusText = mHeader.result?.message 
                     || infoJson.matchInfo?.result?.message 
                     || infoJson.result?.message
@@ -415,26 +409,64 @@ app.get('/api/fetch-score', async (req, res) => {
         }
       }
 
+      const p1 = parseScoreParts(s1);
+      const p2 = parseScoreParts(s2);
+
       const statusLower = statusText.toLowerCase();
       const state = (mHeader.state || infoJson.matchInfo?.state || "").toLowerCase();
       const isFinished = state === "complete" || statusLower.includes("won by") || statusLower.includes("beat") || (Boolean(s1) && Boolean(s2) && (inningsList.length >= 2 || extractedScores.length >= 2));
       const isLive = !isFinished && (state === "inprogress" || state === "innings break" || statusLower.includes("need") || statusLower.includes("opt to"));
 
-      // Left Balls / Need Equation లెక్కింపు
+      // =========================================================================
+      // స్మార్ట్ ఫాల్‌బ్యాక్: API లో statusText ఖాళీగా ఉంటే స్కోర్ల నుండి రిజల్ట్ లెక్కించడం
+      // =========================================================================
+      if (isFinished && (!statusText || statusText.toLowerCase() === "complete" || !statusText.includes("won by"))) {
+        if (p1.r > 0 && p2.r > 0) {
+          // Team 1 ఛేజింగ్ చేసి గెలిస్తే
+          if (p1.r > p2.r) {
+            const wktsLeft = 10 - p1.w;
+            let ballsLeft = 0;
+            if (maxOversLimit && p1.ov > 0) {
+              const compOvers = Math.floor(p1.ov);
+              const extraB = Math.round((p1.ov - compOvers) * 10);
+              const totalBowled = (compOvers * 6) + extraB;
+              ballsLeft = (maxOversLimit * 6) - totalBowled;
+            }
+            statusText = `${outT1} won by ${wktsLeft} wkts${ballsLeft > 0 ? ` (with ${ballsLeft} balls remaining)` : ''}`;
+          } 
+          // Team 2 ఛేజింగ్ చేసి గెలిస్తే
+          else if (p2.r > p1.r) {
+            const wktsLeft = 10 - p2.w;
+            let ballsLeft = 0;
+            if (maxOversLimit && p2.ov > 0) {
+              const compOvers = Math.floor(p2.ov);
+              const extraB = Math.round((p2.ov - compOvers) * 10);
+              const totalBowled = (compOvers * 6) + extraB;
+              ballsLeft = (maxOversLimit * 6) - totalBowled;
+            }
+            statusText = `${outT2} won by ${wktsLeft} wkts${ballsLeft > 0 ? ` (with ${ballsLeft} balls remaining)` : ''}`;
+          } 
+          // మొదటి బ్యాటింగ్ చేసిన జట్టు గెలిస్తే (పరుగుల తేడాతో)
+          else if (p1.r !== p2.r) {
+            const winTeam = p1.r > p2.r ? outT1 : outT2;
+            const runDiff = Math.abs(p1.r - p2.r);
+            statusText = `${winTeam} won by ${runDiff} runs`;
+          }
+        }
+      }
+
+      // లెఫ్ట్ బాల్స్ వివరాలు ఇంకా జతచేయబడకపోతే
       let targetEq = statusText;
       if (isFinished) {
         let ballsLeft = minScore.ballsRemaining || minScore.remBalls;
-        if (!ballsLeft && maxOversLimit && secondInningsOvers > 0 && statusLower.includes("wkts")) {
-          const completedOvers = Math.floor(secondInningsOvers);
-          const extraBalls = Math.round((secondInningsOvers - completedOvers) * 10);
-          const ballsBowled = (completedOvers * 6) + extraBalls;
-          const totalBallsInMatch = maxOversLimit * 6;
-          if (totalBallsInMatch > ballsBowled) {
-            ballsLeft = totalBallsInMatch - ballsBowled;
+        if (!ballsLeft && maxOversLimit && secondInningsOvers > 0 && statusText.toLowerCase().includes("wkts") && !statusText.includes("balls remaining")) {
+          const compOvers = Math.floor(secondInningsOvers);
+          const extraB = Math.round((secondInningsOvers - compOvers) * 10);
+          const totalBowled = (compOvers * 6) + extraB;
+          const rem = (maxOversLimit * 6) - totalBowled;
+          if (rem > 0) {
+            statusText += ` (with ${rem} balls remaining)`;
           }
-        }
-        if (ballsLeft && ballsLeft > 0 && !statusText.includes("balls remaining") && !statusText.includes("left")) {
-          statusText = `${statusText} (with ${ballsLeft} balls remaining)`;
         }
         targetEq = statusText;
       } else if (minScore.remRuns !== undefined && minScore.remBalls !== undefined && minScore.remRuns !== null) {
