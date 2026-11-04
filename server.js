@@ -596,7 +596,7 @@ app.get('/api/fetch-score', async (req, res) => {
         }
       }
 
-      // HTML ఫాల్‌బ్యాక్ స్కోర్లు
+      // HTML ఫాల్‌బ్యాక్ స్కోర్లు (హెడర్ టీమ్ స్కోర్లు మాత్రమే పార్స్ చేయాలి)
       let extractedScores = [];
       if (htmlText) {
         const cleanScoreRegex = /([A-Z]{2,6}(?:-W)?)\s+([0-9]{1,4}(?:\/[0-9]{1,2})?)\s*(?:\(([\d\.]+(?:\s*(?:ov|ovs))?)\))?/gi;
@@ -647,7 +647,7 @@ app.get('/api/fetch-score', async (req, res) => {
           const found = htmlText.match(reg);
           if (found && found[1]) {
             const clean = found[1].replace(/<[^>]+>/g, '').trim();
-            if (clean.length > 5 && !clean.includes("{") && (clean.toLowerCase().includes("won by") || clean.toLowerCase().includes("need"))) {
+            if (clean.length > 5 && !clean.includes("{") && (clean.toLowerCase().includes("won by") || clean.toLowerCase().includes("need") || clean.toLowerCase().includes("opt to"))) {
               statusText = clean;
               break;
             }
@@ -658,12 +658,38 @@ app.get('/api/fetch-score', async (req, res) => {
       const p1 = parseScoreDetails(s1);
       const p2 = parseScoreDetails(s2);
 
+      // =========================================================================
+      // లైవ్ మరియు ఫినిష్డ్ స్టేటస్ ఖచ్చితమైన గుర్తింపు
+      // =========================================================================
       const statusLower = statusText.toLowerCase();
       const state = (mHeader.state || infoJson.matchInfo?.state || "").toLowerCase();
-      const isFinished = state === "complete" || statusLower.includes("won by") || statusLower.includes("beat") || (Boolean(s1) && Boolean(s2) && (inningsList.length >= 2 || extractedScores.length >= 2));
-      const isLive = !isFinished && (state === "inprogress" || state === "innings break" || statusLower.includes("need") || statusLower.includes("opt to"));
 
-      // API లో ఫలితం లేకపోతే స్కోర్ల ఆధారంగా ఆటోమేటిక్ విన్నింగ్ సమీకరణం
+      // లైవ్ మ్యాచ్ పరిస్థితులు
+      const isActuallyLive = state === "inprogress" || state === "in progress" || state === "live"
+                          || statusLower.includes("opt to") 
+                          || statusLower.includes("need") 
+                          || statusLower.includes("trail by") 
+                          || statusLower.includes("lead by")
+                          || statusLower.includes("innings break");
+
+      // కేవలం ఖచ్చితమైన విన్నింగ్ పదాలు లేదా మ్యాచ్ కంప్లీట్ అయితేనే Finished
+      const isFinished = !isActuallyLive && (
+          state === "complete" || 
+          state === "finished" || 
+          statusLower.includes("won by") || 
+          statusLower.includes("beat") || 
+          statusLower.includes("match drawn") || 
+          statusLower.includes("no result")
+      );
+
+      const isLive = !isFinished && (isActuallyLive || Boolean(s1 && !s2));
+
+      // 2. మొదటి ఇన్నింగ్స్ మాత్రమే జరుగుతుంటే రెండవ జట్టు స్కోర్‌ను క్లియర్ చేయడం
+      if (isLive && (statusLower.includes("opt to") || inningsList.length <= 1)) {
+          s2 = ""; 
+      }
+
+      // 3. మ్యాచ్ నిజంగా ముగిసినప్పుడు మాత్రమే విన్నింగ్ సమీకరణం లెక్కించాలి
       if (isFinished && (!statusText || statusText.toLowerCase() === "complete" || !statusText.includes("won by"))) {
         if (p1.r > 0 && p2.r > 0) {
           if (p1.r > p2.r) {
@@ -690,6 +716,11 @@ app.get('/api/fetch-score', async (req, res) => {
             const winTeam = p1.r > p2.r ? outT1 : outT2;
             statusText = `${winTeam} won by ${Math.abs(p1.r - p2.r)} runs`;
           }
+        }
+      } else if (isLive) {
+        // లైవ్ మ్యాచ్ అయితే Cricbuzz ఇచ్చే టాస్ లేదా లైవ్ స్టేటస్ మాత్రమే రావాలి
+        if (!statusText || statusText.toLowerCase() === "complete") {
+            statusText = minScore.matchScoreDetails?.customStatus || "Match in progress";
         }
       }
 
