@@ -203,9 +203,7 @@ app.get('/api/fetch-score', async (req, res) => {
 
     let s1 = "", s2 = "";
 
-    // =========================================================================
     // 1. అఫీషియల్ JSON API నుండి ఇన్నింగ్స్ 1 & 2 స్కోర్లు
-    // =========================================================================
     const inningsList = minScore.matchScoreDetails?.inningsScoreList || cbJson.miniscore?.matchScoreDetails?.inningsScoreList || [];
 
     if (inningsList.length > 0) {
@@ -216,22 +214,16 @@ app.get('/api/fetch-score', async (req, res) => {
         let ovStr = (ov !== "" && ov !== undefined) ? ` (${ov} ov)` : '';
         const formatted = `${r}${w}${ovStr}`.trim();
 
-        // 1st ఇన్నింగ్స్ అయితే
         if (sc.inningsId === 1 || inningsList.indexOf(sc) === 0) {
           s1 = formatted;
-        } 
-        // 2nd ఇన్నింగ్స్ అయితే
-        else if (sc.inningsId === 2 || inningsList.indexOf(sc) === 1) {
+        } else if (sc.inningsId === 2 || inningsList.indexOf(sc) === 1) {
           s2 = formatted;
         }
       });
     }
 
-    // =========================================================================
-    // 2. HTML నుండి లైవ్ హెడర్ స్కోర్ల పక్కా ఎక్స్‌ట్రాక్షన్
-    // =========================================================================
+    // 2. HTML నుండి లైవ్ హెడర్ స్కోర్ల వెలికితీత
     if (htmlText) {
-      // ప్రస్తుత లైవ్ బ్యాటింగ్ స్కోర్: ఉదా. IND 6-1 (1.5)
       const liveRegex = /(?:IND|India|NZ|New Zealand)\s+([0-9]{1,4}(?:-[0-9]{1,2}|\/[0-9]{1,2})?)\s*\(([0-9\.]+)\)/i;
       const liveM = htmlText.match(liveRegex);
       if (liveM) {
@@ -241,9 +233,9 @@ app.get('/api/fetch-score', async (req, res) => {
         const parsedLive = `${runs} (${overs} ov)`;
 
         if (isSameTeam(outT2, liveTeamKey)) {
-          s2 = parsedLive; // ఇండియా బ్యాటింగ్ స్కోర్
+          s2 = parsedLive;
         } else if (isSameTeam(outT1, liveTeamKey)) {
-          s1 = parsedLive; // న్యూజిలాండ్ బ్యాటింగ్ స్కోర్
+          s1 = parsedLive;
         }
       }
 
@@ -259,24 +251,41 @@ app.get('/api/fetch-score', async (req, res) => {
     }
 
     // =========================================================================
-    // 3. లైవ్ నోటీస్ (India need 180 runs) & 2ND INNINGS బ్యాడ్జ్
+    // 3. లైవ్ నోటీస్ (HTML ట్యాగ్‌లు & లింకులు పూర్తిగా తొలగించి కేవలం శుద్ధమైన టెక్స్ట్ మాత్రమే తీసుకోవడం)
     // =========================================================================
     let statusNotice = "";
 
     if (htmlText) {
-      const needMatch = htmlText.match(/([A-Za-z\s]+need\s+[0-9]+\s+runs(?:[^\n<]*))/i);
-      if (needMatch) {
-        statusNotice = needMatch[1].replace(/<[^>]+>/g, '').trim();
+      const rawNoticeMatch = htmlText.match(/class="[^"]*(?:cb-text-inprogress|cb-text-live|cb-min-stts)[^"]*"[^>]*>([\s\S]*?)<\/(?:div|a|span)>/i)
+                          || htmlText.match(/([A-Za-z\s]+need\s+[0-9]+\s+runs[^\n<"']*)/i);
+
+      if (rawNoticeMatch) {
+        let cleanText = (rawNoticeMatch[1] || rawNoticeMatch[0])
+                        .replace(/<[^>]+>/g, '') // అన్ని HTML ట్యాగ్స్ తొలగింపు
+                        .replace(/href="[^"]*"/gi, '') // href లింకులు తొలగింపు
+                        .replace(/["'=]+/g, ' ') // కొటేషన్లు క్లియర్ చేయడం
+                        .replace(/\s+/g, ' ')
+                        .trim();
+
+        // అసలైన సమీకరణాన్ని మాత్రమే వేరుచేయడం (ఉదా: India need 7 runs in 63 balls)
+        const needCleanMatch = cleanText.match(/([A-Za-z\s]+need\s+\d+\s+runs(?:\s+in\s+\d+\s+balls)?)/i);
+        if (needCleanMatch) {
+          statusNotice = needCleanMatch[1].trim();
+        } else if (cleanText.toLowerCase().includes("need")) {
+          statusNotice = cleanText;
+        }
       }
     }
 
+    // ఫాల్‌బ్యాక్: API నుంచి బాల్స్ మరియు రన్స్
     if (!statusNotice && minScore.remRuns) {
-      statusNotice = `${outT2} need ${minScore.remRuns} runs`;
+      const remB = minScore.remBalls ? ` in ${minScore.remBalls} balls` : '';
+      statusNotice = `${outT2} need ${minScore.remRuns} runs${remB}`;
     }
 
     const isSecondInnings = Boolean(s2 || (statusNotice && statusNotice.toLowerCase().includes("need")));
     if (!statusNotice) {
-      statusNotice = isSecondInnings ? "India need 180 runs" : "Match in progress";
+      statusNotice = isSecondInnings ? "India need runs to win" : "Match in progress";
     }
 
     const dynamicBadge = isSecondInnings ? "2ND INNINGS" : "1ST INNINGS";
