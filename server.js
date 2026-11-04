@@ -513,7 +513,7 @@ app.get('/api/fetch-score', async (req, res) => {
         try { htmlText = await results[2].value.text(); } catch(e){}
       }
 
-      // ప్రారంభ సమయం
+      // 1. ప్రారంభ సమయం
       rawStart = infoJson.matchInfo?.startDate || infoJson.startDate || infoJson.matchStartTimestamp || infoJson.matchInfo?.matchStartTimestamp 
               || mHeader.startDate || mHeader.matchStartTimestamp || cbJson.matchStartTimestamp;
 
@@ -533,7 +533,7 @@ app.get('/api/fetch-score', async (req, res) => {
         }
       }
 
-      // టీమ్ పేర్లు
+      // 2. టీమ్ పేర్లు
       let t1Name = mHeader.team1?.name || mHeader.team1?.sName || infoJson.matchInfo?.team1?.name || "";
       let t2Name = mHeader.team2?.name || mHeader.team2?.sName || infoJson.matchInfo?.team2?.name || "";
 
@@ -563,7 +563,7 @@ app.get('/api/fetch-score', async (req, res) => {
       let s1 = "", s2 = "";
       let secondInningsOvers = 0;
 
-      // స్కోర్ల వెలికితీత (JSON API ద్వారా)
+      // 3. అఫీషియల్ JSON API నుండి స్కోర్ల వెలికితీత
       const inningsList = minScore.matchScoreDetails?.inningsScoreList || [];
       inningsList.forEach((sc, idx) => {
         const scStr = fmtInning(sc, defaultMaxOvers);
@@ -596,33 +596,24 @@ app.get('/api/fetch-score', async (req, res) => {
         }
       }
 
-      // HTML స్కోర్లు
-      let extractedScores = [];
-      if (htmlText) {
+      // ఒకవేళ JSON లో స్కోర్లు అస్సలు దొరక్కపోతే మాత్రమే HTML ఫాల్‌బ్యాక్ వాడాలి
+      if (!s1 && htmlText) {
         const cleanScoreRegex = /([A-Z]{2,6}(?:-W)?)\s+([0-9]{1,4}(?:\/[0-9]{1,2})?)\s*(?:\(([\d\.]+(?:\s*(?:ov|ovs))?)\))?/gi;
         let mEntry;
-        while ((mEntry = cleanScoreRegex.exec(htmlText.substring(0, 15000))) !== null) {
+        while ((mEntry = cleanScoreRegex.exec(htmlText.substring(0, 8000))) !== null) {
           const teamKey = mEntry[1].trim();
           const scoreVal = mEntry[2].trim().replace('-', '/');
           let rawOv = mEntry[3] ? mEntry[3].replace(/ovs?/i, '').trim() : '';
           const oversVal = rawOv ? ` (${rawOv} ov)` : (defaultMaxOvers ? ` (${defaultMaxOvers} ov)` : '');
-          extractedScores.push({ name: teamKey, score: `${scoreVal}${oversVal}`.trim(), overs: parseFloat(rawOv || 0) });
-        }
-        if (!s1 || !s2) {
-          extractedScores.forEach(item => {
-            if (isSameTeam(outT1, item.name) && !s1) s1 = item.score;
-            else if (isSameTeam(outT2, item.name) && !s2) s2 = item.score;
-          });
-          if (!s1 && extractedScores[0]) s1 = extractedScores[0].score;
-          if (!s2 && extractedScores[1]) s2 = extractedScores[1].score;
-        }
-        if (!secondInningsOvers && extractedScores[1]) {
-          secondInningsOvers = extractedScores[1].overs;
+          const formattedScore = `${scoreVal}${oversVal}`.trim();
+          
+          if (isSameTeam(outT1, teamKey) && !s1) s1 = formattedScore;
+          else if (isSameTeam(outT2, teamKey) && !s2) s2 = formattedScore;
         }
       }
 
       // =========================================================================
-      // స్టేటస్ / టాస్ / ఫలితం వెలికితీత (సరైన జట్టుకు మాత్రమే మ్యాచ్ అయ్యేలా)
+      // 4. ఫలితం / టాస్ / లైవ్ స్టేటస్ గుర్తింపు
       // =========================================================================
       let statusText = mHeader.result?.message 
                     || infoJson.matchInfo?.result?.message 
@@ -635,20 +626,18 @@ app.get('/api/fetch-score', async (req, res) => {
                     || infoJson.matchInfo?.status 
                     || "";
 
-      // HTML నుంచి స్టేటస్ తీసేటప్పుడు ఇతర మ్యాచ్‌లవి రాకుండా కఠినంగా ఫిల్టర్ చేయడం
+      // HTML నుంచి స్టేటస్ తీసేటప్పుడు కేవలం ప్రస్తుత మ్యాచ్ కి సంబంధించినది మాత్రమే తీసుకోవాలి
       if (htmlText) {
         const resultPatterns = [
           /<div[^>]*class="[^"]*(?:cb-text-complete|cb-min-stts|cb-text-live|cb-text-inprogress)[^"]*"[^>]*>([\s\S]*?)<\/div>/i,
-          /class="[^"]*cb-col-100 cb-col cb-font-18 cb-text-bold[^"]*"[^>]*>([\s\S]*?)<\/div>/i,
-          /<div[^>]*class="[^"]*cb-text-tosswon[^"]*"[^>]*>([\s\S]*?)<\/div>/i
+          /class="[^"]*cb-col-100 cb-col cb-font-18 cb-text-bold[^"]*"[^>]*>([\s\S]*?)<\/div>/i
         ];
         for (const reg of resultPatterns) {
           const found = htmlText.match(reg);
           if (found && found[1]) {
             const clean = found[1].replace(/<[^>]+>/g, '').trim();
             if (clean.length > 5 && !clean.includes("{")) {
-              // ఈ స్టేటస్ ప్రస్తుత మ్యాచ్ లోని ఏదో ఒక జట్టుకు సంబంధించినదైతేనే తీసుకోవాలి
-              if (isSameTeam(outT1, clean) || isSameTeam(outT2, clean) || clean.toLowerCase().includes("opt to") || clean.toLowerCase().includes("toss")) {
+              if (isSameTeam(outT1, clean) || isSameTeam(outT2, clean) || clean.toLowerCase().includes("opt to")) {
                 statusText = clean;
                 break;
               }
@@ -657,17 +646,16 @@ app.get('/api/fetch-score', async (req, res) => {
         }
       }
 
-      // టాస్ టెక్స్ట్ (ఉదా: "India opt to bowl")
-      let tossStatus = mHeader.tossResults?.tossWinnerName ? `${mHeader.tossResults.tossWinnerName} opt to ${mHeader.tossResults.decision?.toLowerCase() || 'bowl'}` : "";
-      if (!tossStatus && htmlText) {
+      // టాస్ సమాచారం
+      let tossStatus = "";
+      if (mHeader.tossResults?.tossWinnerName) {
+        tossStatus = `${mHeader.tossResults.tossWinnerName} opt to ${mHeader.tossResults.decision?.toLowerCase() || 'bowl'}`;
+      } else if (htmlText) {
         const tossMatch = htmlText.match(/([A-Za-z\s]+opt to (?:bowl|bat))/i);
         if (tossMatch && tossMatch[1]) {
           tossStatus = tossMatch[1].trim();
         }
       }
-
-      const p1 = parseScoreDetails(s1);
-      const p2 = parseScoreDetails(s2);
 
       const statusLower = statusText.toLowerCase();
       const state = (mHeader.state || infoJson.matchInfo?.state || "").toLowerCase();
@@ -688,22 +676,24 @@ app.get('/api/fetch-score', async (req, res) => {
           statusLower.includes("no result")
       );
 
-      // ఇన్నింగ్స్ 2 మొదలయ్యిందా లేదా అనేది ఖచ్చితంగా తనిఖీ చేయడం
-      const isSecondInnings = Boolean(s1 && s2 && (inningsList.length >= 2 || extractedScores.length >= 2));
+      // =========================================================================
+      // కచ్చితమైన రెండవ ఇన్నింగ్స్ చెక్: అఫీషియల్ ఇన్నింగ్స్ లిస్ట్ 2 ఉంటేనే 2nd ఇన్నింగ్స్!
+      // =========================================================================
+      const hasTwoInnings = inningsList.length >= 2 || (t1ScObj?.inngs2 !== undefined) || (t2ScObj?.inngs2 !== undefined);
+      const isSecondInnings = isActuallyLive && hasTwoInnings;
       const isLive = !isFinished && (isActuallyLive || Boolean(s1));
 
-      // మొదటి ఇన్నింగ్స్ జరుగుతున్నప్పుడు రెండవ జట్టు స్కోరును ఖాళీగా ఉంచడం
+      // మొదటి ఇన్నింగ్స్ మాత్రమే జరుగుతుంటే Team 2 స్కోరును ఖచ్చితంగా ఖాళీగా ఉంచడం
       if (isLive && !isSecondInnings) {
-        s2 = "";
+        s2 = ""; 
       }
 
-      // =========================================================================
-      // 2ND INNINGS మొదలవ్వకుండా NEED RUNS రాకుండా నిరోధించడం
-      // =========================================================================
+      const p1 = parseScoreDetails(s1);
+      const p2 = parseScoreDetails(s2);
+
       let targetEq = "";
 
       if (isFinished) {
-        // మ్యాచ్ ముగిస్తే విన్నింగ్ సమీకరణం
         if (!statusText || statusText.toLowerCase() === "complete" || !statusText.includes("won by")) {
           if (p1.r > 0 && p2.r > 0) {
             if (p1.r > p2.r) {
@@ -717,18 +707,14 @@ app.get('/api/fetch-score', async (req, res) => {
         }
         targetEq = statusText;
       } else if (isLive) {
-        // 2వ ఇన్నింగ్స్ నడుస్తుంటే మరియు మిగిలిన రన్స్ ఉంటే మాత్రమే NEED RUNS చూపించాలి
+        // రెండవ ఇన్నింగ్స్ నడుస్తుంటే మాత్రమే NEED RUNS సమీకరణం రావాలి
         if (isSecondInnings && minScore.remRuns !== undefined && minScore.remBalls !== undefined && minScore.remRuns !== null) {
           const chasingTeam = minScore.batTeam?.teamName || outT2;
           targetEq = `${chasingTeam} need ${minScore.remRuns} runs in ${minScore.remBalls} balls`;
           statusText = targetEq;
         } else {
-          // మొదటి ఇన్నింగ్స్ నడుస్తున్నప్పుడు కేవలం టాస్ సమాచారం లేదా ప్రస్తుత స్టేటస్ మాత్రమే రావాలి
-          if (tossStatus && (statusLower.includes("need") || !statusText || statusText.toLowerCase() === "complete")) {
-            statusText = tossStatus;
-          } else if (statusLower.includes("need") && !isSecondInnings) {
-            statusText = tossStatus || "Match in progress";
-          }
+          // మొదటి ఇన్నింగ్స్ అయితే టాస్ ఫలితం మాత్రమే రావాలి
+          statusText = tossStatus || (statusLower.includes("opt to") ? statusText : "Match in progress");
           targetEq = statusText;
         }
       }
