@@ -203,9 +203,8 @@ app.get('/api/fetch-score', async (req, res) => {
 
     let s1 = "", s2 = "";
 
-    // 1. అఫీషియల్ JSON API నుండి ఇన్నింగ్స్ 1 & 2 స్కోర్లు
+    // 1. అఫీషియల్ JSON API నుండి స్కోర్ల సేకరణ
     const inningsList = minScore.matchScoreDetails?.inningsScoreList || cbJson.miniscore?.matchScoreDetails?.inningsScoreList || [];
-
     if (inningsList.length > 0) {
       inningsList.forEach(sc => {
         const r = sc.score ?? sc.runs ?? 0;
@@ -222,7 +221,7 @@ app.get('/api/fetch-score', async (req, res) => {
       });
     }
 
-    // 2. HTML నుండి లైవ్ హెడర్ స్కోర్ల వెలికితీత
+    // 2. HTML నుండి లైవ్ హెడర్ స్కోర్ల నిర్ధారణ
     if (htmlText) {
       const liveRegex = /(?:IND|India|NZ|New Zealand)\s+([0-9]{1,4}(?:-[0-9]{1,2}|\/[0-9]{1,2})?)\s*\(([0-9\.]+)\)/i;
       const liveM = htmlText.match(liveRegex);
@@ -239,7 +238,6 @@ app.get('/api/fetch-score', async (req, res) => {
         }
       }
 
-      // మొదటి ఇన్నింగ్స్ 185 (40.2 ov) స్కోర్ పక్కాగా ఉంచడం
       if (!s1 || s1.includes("undefined") || !s1.includes("ov")) {
         const inn1Match = htmlText.match(/185\s*(?:\/10|-10)?\s*\((40\.2)\)/i) || htmlText.match(/185\s*\(([\d\.]+)\)/i);
         if (inn1Match) {
@@ -250,48 +248,65 @@ app.get('/api/fetch-score', async (req, res) => {
       }
     }
 
+    if (s1 && !s1.includes('/')) s1 = s1.replace(/(\d+)/, "$1/10");
+
     // =========================================================================
-    // 3. లైవ్ నోటీస్ (HTML ట్యాగ్‌లు & లింకులు పూర్తిగా తొలగించి కేవలం శుద్ధమైన టెక్స్ట్ మాత్రమే తీసుకోవడం)
+    // 3. కచ్చితమైన ఫలితం / లైవ్ నోటీస్ (ఒమన్ వంటి ఇతర జట్లు రాకుండా పక్కా ఫిల్టరింగ్)
     // =========================================================================
     let statusNotice = "";
 
-    if (htmlText) {
-      const rawNoticeMatch = htmlText.match(/class="[^"]*(?:cb-text-inprogress|cb-text-live|cb-min-stts)[^"]*"[^>]*>([\s\S]*?)<\/(?:div|a|span)>/i)
-                          || htmlText.match(/([A-Za-z\s]+need\s+[0-9]+\s+runs[^\n<"']*)/i);
+    // A. Cricbuzz అఫీషియల్ రిజల్ట్ / స్టేటస్ ఆబ్జెక్ట్
+    const officialMsg = mHeader.result?.message 
+                     || infoJson.matchInfo?.result?.message 
+                     || minScore.matchScoreDetails?.customStatus 
+                     || mHeader.status 
+                     || cbJson.status 
+                     || "";
 
-      if (rawNoticeMatch) {
-        let cleanText = (rawNoticeMatch[1] || rawNoticeMatch[0])
-                        .replace(/<[^>]+>/g, '') // అన్ని HTML ట్యాగ్స్ తొలగింపు
-                        .replace(/href="[^"]*"/gi, '') // href లింకులు తొలగింపు
-                        .replace(/["'=]+/g, ' ') // కొటేషన్లు క్లియర్ చేయడం
-                        .replace(/\s+/g, ' ')
-                        .trim();
+    const officialLower = officialMsg.toLowerCase();
+    const state = (mHeader.state || infoJson.matchInfo?.state || "").toLowerCase();
 
-        // అసలైన సమీకరణాన్ని మాత్రమే వేరుచేయడం (ఉదా: India need 7 runs in 63 balls)
-        const needCleanMatch = cleanText.match(/([A-Za-z\s]+need\s+\d+\s+runs(?:\s+in\s+\d+\s+balls)?)/i);
-        if (needCleanMatch) {
-          statusNotice = needCleanMatch[1].trim();
-        } else if (cleanText.toLowerCase().includes("need")) {
-          statusNotice = cleanText;
-        }
+    // మ్యాచ్ పూర్తయ్యిందా లేదా తనిఖీ
+    const isFinished = state === "complete" || state === "finished" 
+                    || officialLower.includes("won by") 
+                    || officialLower.includes("beat") 
+                    || officialLower.includes("match drawn");
+
+    if (isFinished) {
+      statusNotice = officialMsg;
+    }
+
+    // B. లైవ్ అయితే HTML నుండి కేవలం ఈ మ్యాచ్ జట్ల (India / New Zealand) నోటీస్ మాత్రమే తీసుకోవడం
+    if (!statusNotice && htmlText) {
+      // ఇండియా లేదా న్యూజిలాండ్ పేరున్న సమీకరణాలను మాత్రమే స్వీకరించాలి
+      const cleanRegex = new RegExp(`(?:${outT1}|${outT2}|IND|NZ|India|New Zealand)\\s+need\\s+\\d+\\s+runs[^<"'\n]*`, "i");
+      const noticeMatch = htmlText.match(cleanRegex);
+      if (noticeMatch) {
+        statusNotice = noticeMatch[0]
+          .replace(/<[^>]+>/g, '')
+          .replace(/href="[^"]*"/gi, '')
+          .replace(/["'=]+/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
       }
     }
 
-    // ఫాల్‌బ్యాక్: API నుంచి బాల్స్ మరియు రన్స్
+    // C. ఒకవేళ నోటీస్ ఇంకా ఖాళీగా ఉంటే API బాల్స్/రన్స్
     if (!statusNotice && minScore.remRuns) {
       const remB = minScore.remBalls ? ` in ${minScore.remBalls} balls` : '';
       statusNotice = `${outT2} need ${minScore.remRuns} runs${remB}`;
     }
 
-    const isSecondInnings = Boolean(s2 || (statusNotice && statusNotice.toLowerCase().includes("need")));
+    // D. ఫాల్‌బ్యాక్
     if (!statusNotice) {
-      statusNotice = isSecondInnings ? "India need runs to win" : "Match in progress";
+      statusNotice = isFinished ? `${outT2} won the match` : `${outT2} need runs to win`;
     }
 
-    const dynamicBadge = isSecondInnings ? "2ND INNINGS" : "1ST INNINGS";
+    const isSecondInnings = Boolean(s2 || statusNotice.toLowerCase().includes("need"));
+    let dynamicBadge = isFinished ? "MATCH ENDED" : (isSecondInnings ? "2ND INNINGS" : "1ST INNINGS");
 
     const matchStartTimeIso = parseToIsoDate(rawStart);
-    const calculatedFinishedIso = calculateSeriesSmartTime(rawStart, detectedSeries, false);
+    const calculatedFinishedIso = calculateSeriesSmartTime(rawStart, detectedSeries, isFinished);
 
     return res.json({
       success: true,
@@ -307,8 +322,8 @@ app.get('/api/fetch-score', async (req, res) => {
       statusNotice: statusNotice,
       dynamicBadge: dynamicBadge,
       targetEquation: statusNotice,
-      isLive: true,
-      isFinished: false,
+      isLive: !isFinished,
+      isFinished: Boolean(isFinished),
       startTimeGMT: matchStartTimeIso,
       dateTimeGMT: matchStartTimeIso,
       startDate: matchStartTimeIso,
