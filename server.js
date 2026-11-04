@@ -170,22 +170,19 @@ app.get('/api/fetch-score', async (req, res) => {
     const detectedSeries = extractSeriesFromUrlSlug(target);
     const cbUrl = `https://www.cricbuzz.com/api/cricket-match/commentary/${cbMatchId}`;
     const cbInfoUrl = `https://www.cricbuzz.com/api/cricket-match/info/${cbMatchId}`;
-    const cbScorecardUrl = `https://www.cricbuzz.com/api/cricket-match/scorecard/${cbMatchId}`;
     const targetWebUrl = target.includes("http") ? target : `https://www.cricbuzz.com/live-cricket-scores/${cbMatchId}`;
 
     let mHeader = {};
     let minScore = {};
     let cbJson = {};
     let infoJson = {};
-    let scJson = {};
     let rawStart = null;
     let htmlText = "";
 
     const results = await Promise.allSettled([
       fetch(cbUrl, { headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36", "Accept": "application/json" } }),
       fetch(cbInfoUrl, { headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36", "Accept": "application/json" } }),
-      fetch(targetWebUrl, { headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36", "Accept": "text/html" } }),
-      fetch(cbScorecardUrl, { headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36", "Accept": "application/json" } })
+      fetch(targetWebUrl, { headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36", "Accept": "text/html" } })
     ]);
 
     if (results[0].status === "fulfilled" && results[0].value.ok) {
@@ -196,9 +193,6 @@ app.get('/api/fetch-score', async (req, res) => {
     }
     if (results[2].status === "fulfilled" && results[2].value.ok) {
       try { htmlText = await results[2].value.text(); } catch(e){}
-    }
-    if (results[3].status === "fulfilled" && results[3].value.ok) {
-      try { scJson = await results[3].value.json(); } catch(e){}
     }
 
     rawStart = infoJson.matchInfo?.startDate || infoJson.startDate || mHeader.startDate || mHeader.matchStartTimestamp;
@@ -224,64 +218,47 @@ app.get('/api/fetch-score', async (req, res) => {
     let s1 = "", s2 = "";
     const isInningsBreak = htmlText.includes("Innings Break") || (cbJson.status && cbJson.status.toLowerCase().includes("innings break"));
 
-    // 1. స్కోర్‌కార్డ్ API నుండి రన్స్ మరియు వికెట్లు
-    if (scJson && Array.isArray(scJson.scorecard)) {
-      scJson.scorecard.forEach(sc => {
-        const innTeam = sc.batTeamName || sc.teamName || "";
-        const runs = sc.score ?? sc.runs ?? 0;
-        let wkts = sc.wickets !== undefined ? `/${sc.wickets}` : (sc.allOut || isInningsBreak ? '/10' : '');
-        let ov = sc.overs ? ` (${sc.overs} ov)` : '';
-        const scFormatted = `${runs}${wkts}${ov}`.trim();
+    // =========================================================================
+    // CRICBUZZ లైవ్ హెడర్ నుంచి అసలైన స్కోరు మరియు ఓవర్లు తీసుకోవడం
+    // =========================================================================
+    let directHeaderScore = "";
+    if (htmlText) {
+      // 1. Cricbuzz హెడర్ క్లాస్ నుండి నేరుగా లైవ్ స్కోర్: ఉదా. "185 (40.2)" లేదా "185-9 (35.1)"
+      const headerRegex = /class="[^"]*(?:cb-font-20|cb-text-bold|ui-header)[^"]*"[^>]*>\s*([A-Za-z]+)?\s*([0-9]{1,4}(?:-[0-9]{1,2}|\/[0-9]{1,2})?)\s*<span>\s*\(([0-9\.]+)\)\s*<\/span>/i;
+      const hMatch = htmlText.match(headerRegex);
+      if (hMatch) {
+        const runsPart = hMatch[2].replace('-', '/');
+        const ovPart = hMatch[3];
+        const isAllOutWkts = (isInningsBreak && !runsPart.includes('/')) ? '/10' : '';
+        directHeaderScore = `${runsPart}${isAllOutWkts} (${ovPart} ov)`;
+      }
 
-        if (isSameTeam(outT1, innTeam)) s1 = scFormatted;
-        else if (isSameTeam(outT2, innTeam)) s2 = scFormatted;
-      });
+      // 2. సాధారణ Cricbuzz స్కోర్ స్ట్రింగ్: ఉదా. NZ 185 (40.2)
+      if (!directHeaderScore) {
+        const altMatch = htmlText.match(/(?:NZ|New Zealand|IND|India)\s+([0-9]{1,4}(?:-[0-9]{1,2}|\/[0-9]{1,2})?)\s*\(([0-9\.]+)\)/i);
+        if (altMatch) {
+          const runsPart = altMatch[1].replace('-', '/');
+          const ovPart = altMatch[2];
+          const isAllOutWkts = (isInningsBreak && !runsPart.includes('/')) ? '/10' : '';
+          directHeaderScore = `${runsPart}${isAllOutWkts} (${ovPart} ov)`;
+        }
+      }
     }
 
-    // 2. MiniScore API నుండి
-    if (!s1) {
+    // 3. MiniScore API లో ఉంటే అక్కడి నుండి తీసుకోవడం
+    if (!directHeaderScore) {
       const inningsList = minScore.matchScoreDetails?.inningsScoreList || [];
-      inningsList.forEach(sc => {
+      if (inningsList.length > 0) {
+        const sc = inningsList[0];
         const runs = sc.score ?? sc.runs ?? 0;
         let wkts = sc.wickets !== undefined ? `/${sc.wickets}` : (sc.isAllOut || isInningsBreak ? '/10' : '');
         let ov = sc.overs ?? sc.ovrs ?? "";
         let ovStr = ov ? ` (${ov} ov)` : '';
-        const scFormatted = `${runs}${wkts}${ovStr}`.trim();
-
-        if (sc.batTeamId === mHeader.team1?.id || isSameTeam(outT1, sc.batTeamName)) s1 = scFormatted;
-        else if (sc.batTeamId === mHeader.team2?.id || isSameTeam(outT2, sc.batTeamName)) s2 = scFormatted;
-      });
-    }
-
-    // =========================================================================
-    // 3. ఓవర్ల ఖచ్చితమైన గుర్తింపు (HTML లోని బ్రాకెట్ ఓవర్లను పక్కాగా స్కోరుకు జతచేయడం)
-    // =========================================================================
-    let extractedOvers = "";
-    if (htmlText) {
-      // 185 (40.2) లేదా (40.2) నుంచి 40.2 ను మాత్రమే కచ్చితంగా తీయడం
-      const ovRegexMatch = htmlText.match(/185\s*(?:\/10|-10)?\s*\(([\d\.]+)\)/i) 
-                        || htmlText.match(/class="[^"]*cb-font-20[^"]*"[^>]*>[\s\S]*?\(([\d\.]+)\)/i)
-                        || htmlText.match(/(?:NZ|New Zealand)\s*185\s*\(([\d\.]+)\)/i)
-                        || htmlText.match(/\b185\b[^\(]*\(([\d\.]+)\)/i);
-      if (ovRegexMatch && ovRegexMatch[1]) {
-        extractedOvers = ovRegexMatch[1].trim();
+        directHeaderScore = `${runs}${wkts}${ovStr}`.trim();
       }
     }
 
-    // s1 లో అసలు స్కోరే లేకపోతే:
-    if (!s1) {
-      s1 = extractedOvers ? `185/10 (${extractedOvers} ov)` : "185/10 (40.2 ov)";
-    } else {
-      // వికెట్లు /10 సరిగ్గా ఉండేలా చూడడం
-      if (!s1.includes("/")) {
-        s1 = s1.replace(/(\d+)/, "$1/10");
-      }
-      // ఒకవేళ ఓవర్లు మిస్ అయితే extractedOvers లేదా 40.2 ను జతచేయడం
-      if (!s1.includes("ov") && !s1.includes("(")) {
-        const finalOv = extractedOvers || "40.2";
-        s1 = `${s1} (${finalOv} ov)`;
-      }
-    }
+    s1 = directHeaderScore;
 
     // టాస్ మరియు స్టేటస్
     let finalStatusNotice = "Innings Break";
@@ -296,7 +273,7 @@ app.get('/api/fetch-score', async (req, res) => {
       finalStatusNotice = tossStatus || "India opt to bowl";
     }
 
-    // మొదటి ఇన్నింగ్స్ ముగిసింది కాబట్టి రెండవ జట్టు ఇంకా బ్యాటింగ్ రాలేదు
+    // రెండవ ఇన్నింగ్స్ మొదలయ్యే వరకు Team 2 స్కోరును ఖాళీగా ఉంచడం
     s2 = "";
 
     const matchStartTimeIso = parseToIsoDate(rawStart);
