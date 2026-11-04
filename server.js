@@ -1,179 +1,323 @@
-const TEAM_ALIASES = {
-  // =========================================================================
-  // 1. ICC FULL MEMBERS (MEN, WOMEN & U19)
-  // =========================================================================
-  "ind": [
-    "india", "ind", "indw", "indiaw", "indiawomen", "teamindia", "indians", "bcci", 
-    "indiau19", "indiaa", "indwomen"
-  ],
-  "aus": [
-    "australia", "aus", "ausw", "australiaw", "australiawomen", "aussie", "aussies", 
-    "australiau19", "australiaa"
-  ],
-  "eng": [
-    "england", "eng", "engw", "englandw", "englandwomen", "englandu19", "englanda"
-  ],
-  "sa": [
-    "southafrica", "sa", "rsa", "saw", "southafricaw", "southafricawomen", "proteas", 
-    "southafricau19", "southafricaa"
-  ],
-  "pak": [
-    "pakistan", "pak", "pakw", "pakistanw", "pakistanwomen", "shaheens", 
-    "pakistanu19", "pakistana"
-  ],
-  "nz": [
-    "newzealand", "nz", "nzw", "newzealandw", "newzealandwomen", "whiteferns", 
-    "blackcaps", "newzealandu19", "newzealanda"
-  ],
-  "wi": [
-    "westindies", "wi", "wiw", "westindiesw", "westindieswomen", "windies", 
-    "westindiesu19", "westindiesa"
-  ],
-  "sl": [
-    "srilanka", "sl", "slw", "srilankaw", "srilankawomen", "srilankau19", "srilankaa"
-  ],
-  "ban": [
-    "bangladesh", "ban", "bd", "banw", "bangladeshw", "bangladeshwomen", "tigers", 
-    "bangladeshu19", "bangladesha"
-  ],
-  "afg": [
-    "afghanistan", "afg", "afghan", "afghanistanw", "afghanistanu19", "afghanistana"
-  ],
-  "zim": [
-    "zimbabwe", "zim", "zimw", "zimbabwew", "zimbabwewomen", "chevrons", 
-    "zimbabweu19", "zimbabwea"
-  ],
-  "ire": [
-    "ireland", "ire", "irew", "irelandw", "irelandwomen", "irelandu19", "irelanda"
-  ],
+const express = require('express');
+const cors = require('cors');
 
-  // =========================================================================
-  // 2. MAJOR ASSOCIATE NATIONS (MEN & WOMEN)
-  // =========================================================================
-  "usa": [
-    "unitedstates", "usa", "unitedstatesofamerica", "us", "usaw", "uscricket"
-  ],
-  "nep": [
-    "nepal", "nep", "nepw", "nepalwomen", "rhinos"
-  ],
-  "ned": [
-    "netherlands", "ned", "holland", "dutch", "nedw", "netherlandswomen"
-  ],
-  "sco": [
-    "scotland", "sco", "scow", "scotlandw", "scotlandwomen"
-  ],
-  "nam": [
-    "namibia", "nam", "namw", "namibiawomen", "eagles"
-  ],
-  "uae": [
-    "unitedarabemirates", "uae", "emirates", "uaew", "uaewomen"
-  ],
-  "can": [
-    "canada", "can", "canw", "canadawomen"
-  ],
-  "oma": [
-    "oman", "oma", "omancricket"
-  ],
-  "png": [
-    "papuanewguinea", "png", "pngw", "barramundis", "lewas"
-  ],
-  "uga": [
-    "uganda", "uga", "ugaw", "crane"
-  ],
-  "hkg": [
-    "hongkong", "hkg", "hongkongchina", "hkgw"
-  ],
-  "ken": [
-    "kenya", "ken", "kenw", "simbas"
-  ],
-  "ita": [
-    "italy", "ita", "itaw", "azzurri"
-  ],
-  "jer": [
-    "jersey", "jer", "jerseycricket"
-  ],
-  "kuw": [
-    "kuwait", "kuw", "kuwaitcricket"
-  ],
-  "qat": [
-    "qatar", "qat", "qatarcricket"
-  ],
-  "mas": [
-    "malaysia", "mas", "malaysiaw"
-  ],
-  "sgp": [
-    "singapore", "sgp", "singaporecricket"
-  ],
-  "ger": [
-    "germany", "ger", "gerw", "germanycricket"
-  ],
-  "ber": [
-    "bermuda", "ber", "bermudacricket"
-  ],
-  "den": [
-    "denmark", "den", "denmarkcricket"
-  ],
-  "tha": [
-    "thailand", "tha", "thai", "thaiw", "thailandwomen"
-  ],
-  "bah": [
-    "bahrain", "bh", "bahraincricket"
-  ],
-  "sau": [
-    "saudiarabia", "ksa", "saudicricket"
-  ],
-  "tza": [
-    "tanzania", "tz", "tza", "tanzaniacricket"
-  ],
-  "nga": [
-    "nigeria", "ng", "nga", "yellowgreens"
-  ],
-  "rwa": [
-    "rwanda", "rw", "rwa", "rwandacricket"
-  ],
-  "jpn": [
-    "japan", "jp", "jpn", "japancricket"
-  ],
-  "fji": [
-    "fiji", "fj", "fji"
-  ],
-  "vut": [
-    "vanuatu", "vu", "vut"
-  ],
-  "esp": [
-    "spain", "es", "esp"
-  ],
-  "swe": [
-    "sweden", "se", "swe"
-  ],
-  "nor": [
-    "norway", "no", "nor"
-  ],
-  "fin": [
-    "finland", "fi", "fin"
-  ],
-  "bel": [
-    "belgium", "be", "bel"
-  ],
-  "aut": [
-    "austria", "at", "aut"
-  ],
-  "fra": [
-    "france", "fr", "fra"
-  ],
-  "arg": [
-    "argentina", "ar", "arg"
-  ],
-  "bra": [
-    "brazil", "br", "bra", "brazilw"
-  ],
-  "chi": [
-    "chile", "cl", "chi"
-  ],
-  "cay": [
-    "caymanislands", "ky", "cay"
-  ],
-  "zm": [
-    "zambia", "zm", "zambiacricket"
-  ]
+const app = express();
+app.use(cors());
+
+// =========================================================================
+// 1. COMPLETE CRICAPI HIGH-RES SVG COUNTRY FLAGS CDN BASE & MAPPINGS
+// =========================================================================
+const CRICAPI_FLAG_CDN_BASE = "https://cdorg.b-cdn.net/flags";
+
+let DYNAMIC_COUNTRY_CDN_MAP = {
+  "india": `${CRICAPI_FLAG_CDN_BASE}/in.svg`, "ind": `${CRICAPI_FLAG_CDN_BASE}/in.svg`, "indw": `${CRICAPI_FLAG_CDN_BASE}/in.svg`,
+  "australia": `${CRICAPI_FLAG_CDN_BASE}/au.svg`, "aus": `${CRICAPI_FLAG_CDN_BASE}/au.svg`, "ausw": `${CRICAPI_FLAG_CDN_BASE}/au.svg`,
+  "england": `${CRICAPI_FLAG_CDN_BASE}/gb-eng.svg`, "eng": `${CRICAPI_FLAG_CDN_BASE}/gb-eng.svg`, "engw": `${CRICAPI_FLAG_CDN_BASE}/gb-eng.svg`,
+  "southafrica": `${CRICAPI_FLAG_CDN_BASE}/za.svg`, "rsa": `${CRICAPI_FLAG_CDN_BASE}/za.svg`, "sa": `${CRICAPI_FLAG_CDN_BASE}/za.svg`, "saw": `${CRICAPI_FLAG_CDN_BASE}/za.svg`,
+  "pakistan": `${CRICAPI_FLAG_CDN_BASE}/pk.svg`, "pak": `${CRICAPI_FLAG_CDN_BASE}/pk.svg`, "pakw": `${CRICAPI_FLAG_CDN_BASE}/pk.svg`,
+  "newzealand": `${CRICAPI_FLAG_CDN_BASE}/nz.svg`, "nz": `${CRICAPI_FLAG_CDN_BASE}/nz.svg`, "nzw": `${CRICAPI_FLAG_CDN_BASE}/nz.svg`,
+  "westindies": `${CRICAPI_FLAG_CDN_BASE}/wi.svg`, "wi": `${CRICAPI_FLAG_CDN_BASE}/wi.svg`, "wiw": `${CRICAPI_FLAG_CDN_BASE}/wi.svg`,
+  "srilanka": `${CRICAPI_FLAG_CDN_BASE}/lk.svg`, "sl": `${CRICAPI_FLAG_CDN_BASE}/lk.svg`, "slw": `${CRICAPI_FLAG_CDN_BASE}/lk.svg`,
+  "bangladesh": `${CRICAPI_FLAG_CDN_BASE}/bd.svg`, "ban": `${CRICAPI_FLAG_CDN_BASE}/bd.svg`, "bd": `${CRICAPI_FLAG_CDN_BASE}/bd.svg`, "banw": `${CRICAPI_FLAG_CDN_BASE}/bd.svg`,
+  "afghanistan": `${CRICAPI_FLAG_CDN_BASE}/af.svg`, "afg": `${CRICAPI_FLAG_CDN_BASE}/af.svg`,
+  "zimbabwe": `${CRICAPI_FLAG_CDN_BASE}/zw.svg`, "zim": `${CRICAPI_FLAG_CDN_BASE}/zw.svg`, "zimw": `${CRICAPI_FLAG_CDN_BASE}/zw.svg`,
+  "ireland": `${CRICAPI_FLAG_CDN_BASE}/ie.svg`, "ire": `${CRICAPI_FLAG_CDN_BASE}/ie.svg`, "irew": `${CRICAPI_FLAG_CDN_BASE}/ie.svg`
 };
+
+async function preloadCricapiCountries() {
+  try {
+    const res = await fetch("https://api.cricapi.com/v1/countries?apikey=054d5acf-f4ca-4eda-bb3b-a547f2386ef5&offset=0");
+    if (res.ok) {
+      const json = await res.json();
+      if (json && json.status === "success" && Array.isArray(json.data)) {
+        json.data.forEach(item => {
+          if (item.genericFlag && item.name) {
+            const cleanName = item.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+            DYNAMIC_COUNTRY_CDN_MAP[cleanName] = item.genericFlag;
+            if (item.id) {
+              DYNAMIC_COUNTRY_CDN_MAP[item.id.toLowerCase()] = item.genericFlag;
+            }
+          }
+        });
+      }
+    }
+  } catch (e) {}
+}
+preloadCricapiCountries();
+
+// =========================================================================
+// 2. TEAM HELPERS
+// =========================================================================
+const TEAM_ALIASES = {
+  "ind": ["india", "ind", "indw", "indiaw", "indiawomen", "teamindia", "indians", "bcci"],
+  "nz":  ["newzealand", "nz", "nzw", "newzealandw", "whiteferns", "blackcaps"],
+  "aus": ["australia", "aus", "ausw", "australiaw", "australiawomen", "aussie", "aussies"],
+  "eng": ["england", "eng", "engw", "englandw", "englandwomen"],
+  "pak": ["pakistan", "pak", "pakw", "pakistanw", "pakistanwomen"],
+  "sa":  ["southafrica", "sa", "rsa", "saw", "southafricaw", "proteas"],
+  "wi":  ["westindies", "wi", "wiw", "windies", "westindiesw"],
+  "sl":  ["srilanka", "sl", "slw", "srilankaw", "srilankawomen"],
+  "ban": ["bangladesh", "ban", "bd", "banw", "bangladeshw", "tigers"],
+  "afg": ["afghanistan", "afg", "afghan"],
+  "zim": ["zimbabwe", "zim", "zimw", "zimbabwew", "zimbabwewomen", "chevrons"],
+  "ire": ["ireland", "ire", "irew", "irelandw"]
+};
+
+function getTeamFlagUrl(teamName) {
+  if (!teamName) return "";
+  const clean = String(teamName).toLowerCase().replace(/women|champions|u19|xi|national|team/g, '').replace(/[^a-z0-9]/g, '').trim();
+
+  if (DYNAMIC_COUNTRY_CDN_MAP[clean]) return DYNAMIC_COUNTRY_CDN_MAP[clean];
+
+  for (let key in DYNAMIC_COUNTRY_CDN_MAP) {
+    const kClean = key.replace(/[^a-z0-9]/g, '');
+    if (clean === kClean || (clean.length >= 3 && (clean.includes(kClean) || kClean.includes(clean)))) {
+      return DYNAMIC_COUNTRY_CDN_MAP[key];
+    }
+  }
+
+  for (const [code, aliases] of Object.entries(TEAM_ALIASES)) {
+    if (aliases.includes(clean) || aliases.some(a => clean.includes(a) || a.includes(clean))) {
+      return `${CRICAPI_FLAG_CDN_BASE}/${code}.svg`;
+    }
+  }
+  return "";
+}
+
+function isSameTeam(nameA, nameB) {
+  if (!nameA || !nameB) return false;
+  const a = String(nameA).toLowerCase().replace(/[^a-z0-9]/g, '');
+  const b = String(nameB).toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (!a || !b) return false;
+  if (a === b) return true;
+  if (a.length >= 3 && b.length >= 3 && (a.includes(b) || b.includes(a))) return true;
+
+  for (const group of Object.values(TEAM_ALIASES)) {
+    const aIn = group.some(x => a === x || a.startsWith(x) || x.startsWith(a));
+    const bIn = group.some(x => b === x || b.startsWith(x) || x.startsWith(b));
+    if (aIn && bIn) return true;
+  }
+  return false;
+}
+
+function extractSeriesFromUrlSlug(urlStr) {
+  if (!urlStr || !urlStr.includes("cricbuzz.com")) return "";
+  const parts = urlStr.split('/');
+  const lastPart = parts[parts.length - 1] || parts[parts.length - 2] || "";
+  const cleanMatch = lastPart.replace(/^[a-z0-9]+-vs-[a-z0-9]+(?:-[0-9]+(?:st|nd|rd|th)?-match)?-/i, '');
+  if (cleanMatch && cleanMatch !== lastPart && cleanMatch.length > 3) {
+    return cleanMatch.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+  }
+  return "";
+}
+
+function parseToIsoDate(rawVal) {
+  if (!rawVal) return "";
+  try {
+    let epoch = 0;
+    if (typeof rawVal === 'number' || /^\d{10,13}$/.test(String(rawVal).trim())) {
+      epoch = parseInt(String(rawVal).trim());
+      if (String(epoch).length === 10) epoch *= 1000;
+    } else {
+      epoch = new Date(rawVal).getTime();
+    }
+    if (epoch && !isNaN(epoch)) return new Date(epoch).toISOString();
+  } catch(e) {}
+  return "";
+}
+
+function calculateSeriesSmartTime(startDateVal, seriesOrFormatText, isFinished) {
+  if (!startDateVal) return "";
+  try {
+    let startEpoch = 0;
+    if (typeof startDateVal === 'number' || /^\d{10,13}$/.test(String(startDateVal).trim())) {
+      startEpoch = parseInt(String(startDateVal).trim());
+      if (String(startEpoch).length === 10) startEpoch *= 1000;
+    } else {
+      startEpoch = new Date(startDateVal).getTime();
+    }
+    if (!startEpoch || isNaN(startEpoch)) return "";
+    if (!isFinished) return new Date(startEpoch).toISOString();
+
+    const text = String(seriesOrFormatText || '').toLowerCase();
+    let playingDurationHours = (text.includes('test')) ? 7.0 : ((text.includes('odi')) ? 8.0 : 3.5);
+    return new Date(startEpoch + (playingDurationHours + 3.0) * 3600000).toISOString();
+  } catch (e) {
+    return "";
+  }
+}
+
+// =========================================================================
+// 3. API ROUTE
+// =========================================================================
+app.get('/api/fetch-score', async (req, res) => {
+  const target = req.query.id || "";
+  const t1Query = (req.query.t1 || "").trim();
+  const t2Query = (req.query.t2 || "").trim();
+
+  if (!target) {
+    return res.status(400).json({ success: false, message: "Missing id/url parameter" });
+  }
+
+  try {
+    let cbMatchId = target;
+    const m = target.match(/(?:cricket-scores|live-cricket-scores|cricket-match-highlights)\/(\d+)/i) || target.match(/\/(\d+)/) || target.match(/\d{5,7}/);
+    if (m && m[1]) cbMatchId = m[1];
+    else if (m && m[0]) cbMatchId = m[0];
+
+    const detectedSeries = extractSeriesFromUrlSlug(target);
+    const cbUrl = `https://www.cricbuzz.com/api/cricket-match/commentary/${cbMatchId}`;
+    const cbInfoUrl = `https://www.cricbuzz.com/api/cricket-match/info/${cbMatchId}`;
+    const cbMiniscoreUrl = `https://www.cricbuzz.com/api/cricket-match/miniscore/${cbMatchId}`;
+    const mobileWebUrl = `https://m.cricbuzz.com/cricket-commentary/${cbMatchId}`;
+
+    const headers = {
+      "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
+      "Accept": "application/json, text/html, */*",
+      "Referer": "https://m.cricbuzz.com/"
+    };
+
+    let mHeader = {};
+    let minScore = {};
+    let cbJson = {};
+    let infoJson = {};
+    let miniJson = {};
+    let rawStart = null;
+    let htmlText = "";
+
+    const results = await Promise.allSettled([
+      fetch(cbUrl, { headers }),
+      fetch(cbInfoUrl, { headers }),
+      fetch(cbMiniscoreUrl, { headers }),
+      fetch(mobileWebUrl, { headers })
+    ]);
+
+    if (results[0].status === "fulfilled" && results[0].value.ok) {
+      try { cbJson = await results[0].value.json(); mHeader = cbJson.matchHeader || {}; minScore = cbJson.miniscore || {}; } catch(e){}
+    }
+    if (results[1].status === "fulfilled" && results[1].value.ok) {
+      try { infoJson = await results[1].value.json(); } catch(e){}
+    }
+    if (results[2].status === "fulfilled" && results[2].value.ok) {
+      try { miniJson = await results[2].value.json(); } catch(e){}
+    }
+    if (results[3].status === "fulfilled" && results[3].value.ok) {
+      try { htmlText = await results[3].value.text(); } catch(e){}
+    }
+
+    rawStart = infoJson.matchInfo?.startDate || infoJson.startDate || mHeader.startDate || mHeader.matchStartTimestamp;
+
+    // టీమ్ పేర్లు
+    let t1Name = mHeader.team1?.name || mHeader.team1?.sName || infoJson.matchInfo?.team1?.name || "";
+    let t2Name = mHeader.team2?.name || mHeader.team2?.sName || infoJson.matchInfo?.team2?.name || "";
+
+    const outT1 = t1Query || t1Name || "New Zealand";
+    const outT2 = t2Query || t2Name || "India";
+
+    const isInningsBreak = htmlText.includes("Innings Break") 
+                        || (cbJson.status && cbJson.status.toLowerCase().includes("innings break"))
+                        || (miniJson.status && miniJson.status.toLowerCase().includes("innings break"));
+
+    let s1 = "", s2 = "";
+
+    // =========================================================================
+    // 1. MINISCORE API డేటా నుండి కచ్చితమైన స్కోర్ & ఓవర్లు సంగ్రహించడం
+    // =========================================================================
+    const activeMiniscore = (miniJson && Object.keys(miniJson).length > 0) ? miniJson : minScore;
+    const inningsList = activeMiniscore.matchScoreDetails?.inningsScoreList || cbJson.miniscore?.matchScoreDetails?.inningsScoreList || [];
+
+    if (inningsList.length > 0) {
+      const inn1 = inningsList[0];
+      const r = inn1.score ?? inn1.runs ?? 0;
+      let w = inn1.wickets !== undefined ? `/${inn1.wickets}` : (inn1.isAllOut || isInningsBreak ? '/10' : '');
+      let ov = inn1.overs ?? inn1.ovrs ?? activeMiniscore.overs ?? "";
+      let ovStr = ov ? ` (${ov} ov)` : '';
+      s1 = `${r}${w}${ovStr}`.trim();
+    }
+
+    // miniscore బ్యాటింగ్ రికార్డులు (batTeamScore) ద్వారా క్రాస్ చెక్
+    if (!s1 && activeMiniscore.batTeam) {
+      const bTeam = activeMiniscore.batTeam;
+      const r = bTeam.teamScore ?? activeMiniscore.score ?? 0;
+      let w = bTeam.teamWkts !== undefined ? `/${bTeam.teamWkts}` : (isInningsBreak ? '/10' : '');
+      let ov = bTeam.teamOvers ?? activeMiniscore.overs ?? "";
+      let ovStr = ov ? ` (${ov} ov)` : '';
+      s1 = `${r}${w}${ovStr}`.trim();
+    }
+
+    // =========================================================================
+    // 2. HTML ఫాల్‌బ్యాక్: మొబైల్ పేజీ ట్యాగ్స్ నుండి వెలికితీత
+    // =========================================================================
+    if (!s1 || !s1.includes("ov")) {
+      if (htmlText) {
+        // ఉదాహరణ: 185 (40.2) లేదా NZ 185/10 (40.2 ov)
+        const patterns = [
+          /(?:NZ|New Zealand|IND|India)?[^\d]*?(\d{2,4})\s*(?:-(\d{1,2})|\/(\d{1,2}))?\s*\(([\d\.]+)\)/i,
+          /class="[^"]*ui-bat-team-scores[^"]*"[^>]*>\s*(\d{2,4})\s*(?:-(\d{1,2})|\/(\d{1,2}))?\s*<span>\s*\(([\d\.]+)\)\s*<\/span>/i,
+          /(\d{2,4})\s*\(([\d\.]+)\s*(?:ov)?\)/i
+        ];
+
+        for (const reg of patterns) {
+          const match = htmlText.match(reg);
+          if (match) {
+            const r = match[1];
+            let w = match[2] || match[3] || (isInningsBreak ? "10" : "");
+            const ov = match[4] || match[2];
+            s1 = `${r}${w ? `/${w}` : ''} (${ov} ov)`;
+            break;
+          }
+        }
+      }
+    }
+
+    // ఆల్ అవుట్ అయితే వికెట్ /10 పక్కాగా ఉంచడం
+    if (s1 && !s1.includes('/') && isInningsBreak) {
+      s1 = s1.replace(/(\d+)/, "$1/10");
+    }
+
+    // స్టేటస్ మరియు నోటీస్
+    let finalStatusNotice = "Innings Break";
+    if (!isInningsBreak) {
+      let tossStatus = "";
+      if (mHeader.tossResults?.tossWinnerName) {
+        tossStatus = `${mHeader.tossResults.tossWinnerName} opt to ${mHeader.tossResults.decision?.toLowerCase() || 'bowl'}`;
+      } else {
+        const tossMatch = htmlText.match(/(?:India|New Zealand|IND|NZ)\s+opt to (?:bowl|bat)/i);
+        if (tossMatch) tossStatus = tossMatch[0];
+      }
+      finalStatusNotice = tossStatus || "India opt to bowl";
+    }
+
+    s2 = "";
+
+    const matchStartTimeIso = parseToIsoDate(rawStart);
+    const calculatedFinishedIso = calculateSeriesSmartTime(rawStart, detectedSeries, false);
+
+    return res.json({
+      success: true,
+      source: "cricbuzz",
+      matchId: cbMatchId,
+      series: detectedSeries || mHeader.seriesName || "1st ODI, India tour of New Zealand 2026",
+      t1: outT1,
+      t2: outT2,
+      t1_img: getTeamFlagUrl(outT1),
+      t2_img: getTeamFlagUrl(outT2),
+      t1_score: s1,
+      t2_score: s2,
+      statusNotice: finalStatusNotice,
+      dynamicBadge: isInningsBreak ? "INNINGS BREAK" : "1ST INNINGS",
+      targetEquation: finalStatusNotice,
+      isLive: true,
+      isFinished: false,
+      startTimeGMT: matchStartTimeIso,
+      dateTimeGMT: matchStartTimeIso,
+      startDate: matchStartTimeIso,
+      calculatedFinishedDate: calculatedFinishedIso
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
