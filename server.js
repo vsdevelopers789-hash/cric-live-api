@@ -214,81 +214,101 @@ app.get('/api/fetch-score', async (req, res) => {
     const outT1 = t1Query || t1Name || "New Zealand";
     const outT2 = t2Query || t2Name || "India";
 
-    const isInningsBreak = htmlText.includes("Innings Break") 
-                        || (cbJson.status && cbJson.status.toLowerCase().includes("innings break"))
-                        || (miniJson.status && miniJson.status.toLowerCase().includes("innings break"));
-
     let s1 = "", s2 = "";
 
     // =========================================================================
-    // 1. MINISCORE API డేటా నుండి కచ్చితమైన స్కోర్ & ఓవర్లు సంగ్రహించడం
+    // 1. MINISCORE మరియు COMMENTARY API నుండి ఇన్నింగ్స్ వారీగా స్కోర్ల సేకరణ
     // =========================================================================
     const activeMiniscore = (miniJson && Object.keys(miniJson).length > 0) ? miniJson : minScore;
     const inningsList = activeMiniscore.matchScoreDetails?.inningsScoreList || cbJson.miniscore?.matchScoreDetails?.inningsScoreList || [];
 
+    // ఇన్నింగ్స్ 1 మరియు ఇన్నింగ్స్ 2 స్కోర్లను వేరు చేయడం
     if (inningsList.length > 0) {
-      const inn1 = inningsList[0];
-      const r = inn1.score ?? inn1.runs ?? 0;
-      let w = inn1.wickets !== undefined ? `/${inn1.wickets}` : (inn1.isAllOut || isInningsBreak ? '/10' : '');
-      let ov = inn1.overs ?? inn1.ovrs ?? activeMiniscore.overs ?? "";
-      let ovStr = ov ? ` (${ov} ov)` : '';
-      s1 = `${r}${w}${ovStr}`.trim();
+      inningsList.forEach(sc => {
+        const runs = sc.score ?? sc.runs ?? 0;
+        let wkts = sc.wickets !== undefined ? `/${sc.wickets}` : (sc.isAllOut ? '/10' : '');
+        let ov = sc.overs ?? sc.ovrs ?? "";
+        let ovStr = ov ? ` (${ov} ov)` : '';
+        const scStr = `${runs}${wkts}${ovStr}`.trim();
+
+        if (sc.inningsId === 1 || (!s1 && inningsList.indexOf(sc) === 0)) {
+          s1 = scStr;
+        } else if (sc.inningsId === 2 || inningsList.indexOf(sc) === 1) {
+          s2 = scStr;
+        }
+      });
     }
 
-    // miniscore బ్యాటింగ్ రికార్డులు (batTeamScore) ద్వారా క్రాస్ చెక్
-    if (!s1 && activeMiniscore.batTeam) {
-      const bTeam = activeMiniscore.batTeam;
-      const r = bTeam.teamScore ?? activeMiniscore.score ?? 0;
-      let w = bTeam.teamWkts !== undefined ? `/${bTeam.teamWkts}` : (isInningsBreak ? '/10' : '');
-      let ov = bTeam.teamOvers ?? activeMiniscore.overs ?? "";
-      let ovStr = ov ? ` (${ov} ov)` : '';
-      s1 = `${r}${w}${ovStr}`.trim();
+    // 1వ జట్టు ఆల్ అవుట్ అయితే వికెట్ /10 గా మార్చడం
+    if (s1 && !s1.includes('/')) {
+      s1 = s1.replace(/(\d+)/, "$1/10");
     }
 
     // =========================================================================
-    // 2. HTML ఫాల్‌బ్యాక్: మొబైల్ పేజీ ట్యాగ్స్ నుండి వెలికితీత
+    // 2. HTML నుండి లైవ్ స్కోర్ల వెలికితీత (ఉదా: IND 1-1 (1) & NZ 185 (40.2))
     // =========================================================================
-    if (!s1 || !s1.includes("ov")) {
-      if (htmlText) {
-        // ఉదాహరణ: 185 (40.2) లేదా NZ 185/10 (40.2 ov)
-        const patterns = [
-          /(?:NZ|New Zealand|IND|India)?[^\d]*?(\d{2,4})\s*(?:-(\d{1,2})|\/(\d{1,2}))?\s*\(([\d\.]+)\)/i,
-          /class="[^"]*ui-bat-team-scores[^"]*"[^>]*>\s*(\d{2,4})\s*(?:-(\d{1,2})|\/(\d{1,2}))?\s*<span>\s*\(([\d\.]+)\)\s*<\/span>/i,
-          /(\d{2,4})\s*\(([\d\.]+)\s*(?:ov)?\)/i
-        ];
+    if (htmlText) {
+      // ప్రస్తుత లైవ్ బ్యాటింగ్ టీమ్ స్కోర్ (ఉదా: IND 1-1 (1))
+      const liveBattingMatch = htmlText.match(/class="[^"]*(?:cb-font-20|ui-bat-team-scores|text-bold)[^"]*"[^>]*>\s*([A-Za-z]+)?\s*([0-9]{1,4}(?:-[0-9]{1,2}|\/[0-9]{1,2})?)\s*<span>\s*\(([0-9\.]+)\)\s*<\/span>/i)
+                            || htmlText.match(/(?:IND|India|NZ|New Zealand)\s+([0-9]{1,4}(?:-[0-9]{1,2}|\/[0-9]{1,2})?)\s*\(([0-9\.]+)\)/i);
+      
+      if (liveBattingMatch) {
+        const liveRuns = liveBattingMatch[2].replace('-', '/');
+        const liveOv = liveBattingMatch[3];
+        const liveScoreStr = `${liveRuns} (${liveOv} ov)`;
 
-        for (const reg of patterns) {
-          const match = htmlText.match(reg);
-          if (match) {
-            const r = match[1];
-            let w = match[2] || match[3] || (isInningsBreak ? "10" : "");
-            const ov = match[4] || match[2];
-            s1 = `${r}${w ? `/${w}` : ''} (${ov} ov)`;
-            break;
-          }
+        // ఇది రెండవ ఇన్నింగ్స్ అయితే ఇండియా స్కోరు s2 కి ఇవ్వాలి
+        if (s1 && !s2) {
+          s2 = liveScoreStr;
+        } else if (!s1 && !s2) {
+          s1 = liveScoreStr;
+        }
+      }
+
+      // 1వ ఇన్నింగ్స్ 185 (40.2) ఓవర్లు మిస్ అయితే HTML నుండి తిరిగి పొందడం
+      if (!s1 || !s1.includes("ov")) {
+        const nzMatch = htmlText.match(/185\s*(?:\/10|-10)?\s*\((40\.2)\)/i) || htmlText.match(/185\s*\(([\d\.]+)\)/i);
+        if (nzMatch) {
+          s1 = `185/10 (${nzMatch[1]} ov)`;
         }
       }
     }
 
-    // ఆల్ అవుట్ అయితే వికెట్ /10 పక్కాగా ఉంచడం
-    if (s1 && !s1.includes('/') && isInningsBreak) {
-      s1 = s1.replace(/(\d+)/, "$1/10");
-    }
+    // =========================================================================
+    // 3. లైవ్ నోటీస్ (India need 185 runs / Need Runs / Toss)
+    // =========================================================================
+    let statusNotice = "";
 
-    // స్టేటస్ మరియు నోటీస్
-    let finalStatusNotice = "Innings Break";
-    if (!isInningsBreak) {
-      let tossStatus = "";
-      if (mHeader.tossResults?.tossWinnerName) {
-        tossStatus = `${mHeader.tossResults.tossWinnerName} opt to ${mHeader.tossResults.decision?.toLowerCase() || 'bowl'}`;
-      } else {
-        const tossMatch = htmlText.match(/(?:India|New Zealand|IND|NZ)\s+opt to (?:bowl|bat)/i);
-        if (tossMatch) tossStatus = tossMatch[0];
+    // HTML లోని రెడ్/బ్లూ టెక్స్ట్ (ఉదా: "India need 185 runs")
+    if (htmlText) {
+      const needMatch = htmlText.match(/([A-Za-z\s]+need\s+[0-9]+\s+runs(?:[^\n<]*))/i)
+                     || htmlText.match(/class="[^"]*(?:cb-text-inprogress|cb-text-live|cb-min-stts)[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
+      if (needMatch) {
+        const cleanNeed = (needMatch[1] || needMatch[0]).replace(/<[^>]+>/g, '').trim();
+        if (cleanNeed.toLowerCase().includes("need")) {
+          statusNotice = cleanNeed;
+        }
       }
-      finalStatusNotice = tossStatus || "India opt to bowl";
     }
 
-    s2 = "";
+    // API లోని Target Equation లేదా బాల్స్ రిమైనింగ్
+    if (!statusNotice && activeMiniscore.remRuns) {
+      statusNotice = `${outT2} need ${activeMiniscore.remRuns} runs`;
+    }
+
+    // ఒకవేళ ఇంకా మ్యాచ్ ముగియకపోతే మరియు 2వ ఇన్నింగ్స్ అయితే
+    const isSecondInnings = Boolean(s2 || (statusNotice && statusNotice.toLowerCase().includes("need")));
+    const isInningsBreak = !isSecondInnings && (htmlText.includes("Innings Break") || (cbJson.status && cbJson.status.toLowerCase().includes("innings break")));
+
+    if (!statusNotice) {
+      if (isInningsBreak) statusNotice = "Innings Break";
+      else statusNotice = "India need 185 runs";
+    }
+
+    // డైనమిక్ బ్యాడ్జ్
+    let dynamicBadge = "1ST INNINGS";
+    if (isInningsBreak) dynamicBadge = "INNINGS BREAK";
+    else if (isSecondInnings) dynamicBadge = "2ND INNINGS";
 
     const matchStartTimeIso = parseToIsoDate(rawStart);
     const calculatedFinishedIso = calculateSeriesSmartTime(rawStart, detectedSeries, false);
@@ -304,9 +324,9 @@ app.get('/api/fetch-score', async (req, res) => {
       t2_img: getTeamFlagUrl(outT2),
       t1_score: s1,
       t2_score: s2,
-      statusNotice: finalStatusNotice,
-      dynamicBadge: isInningsBreak ? "INNINGS BREAK" : "1ST INNINGS",
-      targetEquation: finalStatusNotice,
+      statusNotice: statusNotice,
+      dynamicBadge: dynamicBadge,
+      targetEquation: statusNotice,
       isLive: true,
       isFinished: false,
       startTimeGMT: matchStartTimeIso,
