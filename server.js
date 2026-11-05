@@ -46,9 +46,6 @@ async function preloadCricapiCountries() {
 }
 preloadCricapiCountries();
 
-// =========================================================================
-// 2. TEAM ALIASES & COMPARISON HELPERS
-// =========================================================================
 const TEAM_ALIASES = {
   "ind": ["india", "ind", "indw", "indiaw", "indiawomen", "teamindia", "indians", "bcci"],
   "nz":  ["newzealand", "nz", "nzw", "newzealandw", "whiteferns", "blackcaps"],
@@ -144,7 +141,7 @@ function calculateSeriesSmartTime(startDateVal, seriesOrFormatText, isFinished) 
 }
 
 // =========================================================================
-// 3. COMPLETE LIVE SCORE ROUTE (STRICT VERIFICATION)
+// 3. API ROUTE (STRICT UPCOMING / LIVE / FINISHED LOGIC)
 // =========================================================================
 app.get('/api/fetch-score', async (req, res) => {
   const target = req.query.id || "";
@@ -197,7 +194,23 @@ app.get('/api/fetch-score', async (req, res) => {
 
     rawStart = infoJson.matchInfo?.startDate || infoJson.startDate || mHeader.startDate || mHeader.matchStartTimestamp;
 
-    // STEP 1: ఈ మ్యాచ్ యొక్క అధికారిక టీమ్ పేర్లు లాక్ చేయడం
+    // HTML నుండి ప్రారంభ సమయం (ఉదా: "Match starts at Nov 07, 02:00 GMT")
+    let upcomingNotice = "";
+    if (htmlText) {
+      const matchStartsRegex = /Match starts at ([A-Za-z0-9,\s:]+GMT)/i;
+      const startsMatch = htmlText.match(matchStartsRegex);
+      if (startsMatch) {
+        upcomingNotice = startsMatch[0].trim();
+        if (!rawStart) {
+          // తేదీని ISO రూపంలోకి మార్చడం
+          const gmtStr = startsMatch[1];
+          const parsedEpoch = new Date(`${gmtStr} 2026`).getTime() || new Date(gmtStr).getTime();
+          if (parsedEpoch && !isNaN(parsedEpoch)) rawStart = parsedEpoch;
+        }
+      }
+    }
+
+    // టీమ్ పేర్లు గుర్తించడం
     let t1Name = mHeader.team1?.name || mHeader.team1?.sName || infoJson.matchInfo?.team1?.name || "";
     let t2Name = mHeader.team2?.name || mHeader.team2?.sName || infoJson.matchInfo?.team2?.name || "";
 
@@ -215,27 +228,39 @@ app.get('/api/fetch-score', async (req, res) => {
     const outT1 = t1Query || t1Name || "Team 1";
     const outT2 = t2Query || t2Name || "Team 2";
 
-    // మ్యాచ్ స్థితి నిర్ధారణ (State)
+    // మ్యాచ్ స్థితి నిర్ణయం (State)
     const state = (mHeader.state || infoJson.matchInfo?.state || cbJson.state || "").toLowerCase();
     const statusRaw = (mHeader.status || infoJson.matchInfo?.status || mHeader.result?.message || cbJson.status || "").trim();
     const statusLower = statusRaw.toLowerCase();
 
-    const isMatchComplete = state === "complete" || state === "finished" || statusLower.includes("won by") || statusLower.includes("beat") || statusLower.includes("match drawn");
-    const isMatchPreview = state === "preview" || state === "upcoming" || statusLower.includes("starts at") || statusLower.includes("match starts");
+    // Upcoming స్థితి ఖచ్చితమైన తనిఖీ
+    const isMatchPreview = Boolean(upcomingNotice) 
+                        || state === "preview" 
+                        || state === "upcoming" 
+                        || statusLower.includes("starts at") 
+                        || statusLower.includes("match starts");
+
+    const isMatchComplete = !isMatchPreview && (
+      state === "complete" || state === "finished" || statusLower.includes("won by") || statusLower.includes("beat") || statusLower.includes("match drawn")
+    );
+
     const isMatchLive = !isMatchPreview && !isMatchComplete;
 
     let s1 = "", s2 = "";
     let statusNotice = "";
 
-    // STEP 2: UPCOMING MATCH అయితే స్కోర్లు ఖాళీగా ఉంచడం
+    // -------------------------------------------------------------------------
+    // 1. UPCOMING MATCH అయితే స్కోర్లు ఉండకూడదు, కేవలం టైమ్ మాత్రమే ఉండాలి
+    // -------------------------------------------------------------------------
     if (isMatchPreview) {
       s1 = "";
       s2 = "";
-      statusNotice = statusRaw || "Match Starts Soon";
+      statusNotice = upcomingNotice || statusRaw || "Match Starts Soon";
     } 
-    // STEP 3: LIVE లేదా FINISHED అయితే మాత్రమే స్కోర్లు సంగ్రహించడం
+    // -------------------------------------------------------------------------
+    // 2. LIVE లేదా FINISHED అయితే మాత్రమే స్కోర్లు ప్రాసెస్ చేయాలి
+    // -------------------------------------------------------------------------
     else {
-      // A. అఫీషియల్ JSON API నుండి ఇన్నింగ్స్ స్కోర్లు
       const inningsList = minScore.matchScoreDetails?.inningsScoreList || cbJson.miniscore?.matchScoreDetails?.inningsScoreList || [];
       if (inningsList.length > 0) {
         inningsList.forEach((sc, idx) => {
@@ -255,48 +280,21 @@ app.get('/api/fetch-score', async (req, res) => {
         });
       }
 
-      // B. HTML లోని హెడర్ నుండి ఈ మ్యాచ్ జట్ల స్కోర్లను మాత్రమే ధృవీకరించడం
-      if (htmlText) {
-        const teamTokens = [outT1, outT2, mHeader.team1?.sName, mHeader.team2?.sName].filter(Boolean).map(t => t.trim());
-        const regexTeamStr = teamTokens.join('|');
-        const dynScoreRegex = new RegExp(`(?:${regexTeamStr})\\s+([0-9]{1,4}(?:-[0-9]{1,2}|\\/[0-9]{1,2})?)\\s*\\(([0-9\\.]+)\\)`, "gi");
-        
-        let matchEntry;
-        while ((matchEntry = dynScoreRegex.exec(htmlText)) !== null) {
-          const matchedTeam = matchEntry[0].split(/\s+/)[0];
-          const runsPart = matchEntry[1].replace('-', '/');
-          const ovPart = matchEntry[2];
-          const formattedSc = `${runsPart} (${ovPart} ov)`;
-
-          if (isSameTeam(outT1, matchedTeam)) {
-            if (!s1 || !s1.includes("ov")) s1 = formattedSc;
-          } else if (isSameTeam(outT2, matchedTeam)) {
-            if (!s2 || !s2.includes("ov")) s2 = formattedSc;
-          }
-        }
-      }
-
-      // STEP 4: కఠినమైన నోటీస్/రిజల్ట్ ఫిల్టరింగ్ (వేరే మ్యాచ్ వివరాలు పూర్తిగా నిషేధం)
       if (isMatchComplete) {
-        // Cricbuzz ఇచ్చే అఫీషియల్ విన్నింగ్ మెసేజ్
         if (mHeader.result?.message && (isSameTeam(outT1, mHeader.result.message) || isSameTeam(outT2, mHeader.result.message))) {
           statusNotice = mHeader.result.message;
         } else if (statusLower.includes("won by")) {
           statusNotice = statusRaw;
         } else if (htmlText) {
-          // కేవలం ఈ రెండు జట్ల పేర్లతో ఉన్న "won by" మాత్రమే తీసుకోవాలి
           const wonMatch = htmlText.match(new RegExp(`(?:${outT1}|${outT2})\\s+won by [^<\\n]*`, "i"));
           if (wonMatch) statusNotice = wonMatch[0].replace(/<[^>]+>/g, '').trim();
         }
         if (!statusNotice) statusNotice = "Match Ended";
-      } 
-      // ఇన్నింగ్స్ బ్రేక్ లేదా లైవ్ మ్యాచ్ అయితే
-      else if (isMatchLive) {
+      } else {
         const isInningsBreak = htmlText.includes("Innings Break") || statusLower.includes("innings break");
         if (isInningsBreak) {
           statusNotice = "Innings Break";
         } else {
-          // కేవలం outT1 లేదా outT2 పేరుతో మాత్రమే ఉన్న "need runs" తీసుకోవాలి (ఒమన్ వంటివి రావు)
           const liveNeedRegex = new RegExp(`(?:${outT1}|${outT2})\\s+need\\s+\\d+\\s+runs[^<"\\n]*`, "i");
           const needMatch = htmlText.match(liveNeedRegex);
           if (needMatch) {
@@ -313,7 +311,7 @@ app.get('/api/fetch-score', async (req, res) => {
       }
     }
 
-    // డైనమిక్ బ్యాడ్జ్ నిర్ణయం
+    // డైనమిక్ బ్యాడ్జ్
     let dynamicBadge = "UPCOMING";
     if (isMatchComplete) {
       dynamicBadge = "MATCH ENDED";
@@ -341,8 +339,8 @@ app.get('/api/fetch-score', async (req, res) => {
       statusNotice: statusNotice,
       dynamicBadge: dynamicBadge,
       targetEquation: statusNotice,
-      isLive: isMatchLive,
-      isFinished: isMatchComplete,
+      isLive: Boolean(isMatchLive),
+      isFinished: Boolean(isMatchComplete),
       startTimeGMT: matchStartTimeIso,
       dateTimeGMT: matchStartTimeIso,
       startDate: matchStartTimeIso,
