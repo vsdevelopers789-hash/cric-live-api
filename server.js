@@ -2,337 +2,318 @@ const express = require('express');
 const cors = require('cors');
 
 const app = express();
+
+// CORS & JSON Body Parsing
 app.use(cors());
+app.use(express.json({ limit: '15mb' }));
+app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 
 // =========================================================================
-// 1. FLAGS CDN BASE & MAPPINGS
+// 1. GITHUB CONFIGURATION & IN-MEMORY CACHE (ENVIRONMENT VARIABLE SECURED)
 // =========================================================================
-const CRICAPI_FLAG_CDN_BASE = "https://cdorg.b-cdn.net/flags";
-
-let DYNAMIC_COUNTRY_CDN_MAP = {
-  "india": `${CRICAPI_FLAG_CDN_BASE}/in.svg`, "ind": `${CRICAPI_FLAG_CDN_BASE}/in.svg`, "indw": `${CRICAPI_FLAG_CDN_BASE}/in.svg`,
-  "australia": `${CRICAPI_FLAG_CDN_BASE}/au.svg`, "aus": `${CRICAPI_FLAG_CDN_BASE}/au.svg`, "ausw": `${CRICAPI_FLAG_CDN_BASE}/au.svg`,
-  "england": `${CRICAPI_FLAG_CDN_BASE}/gb-eng.svg`, "eng": `${CRICAPI_FLAG_CDN_BASE}/gb-eng.svg`, "engw": `${CRICAPI_FLAG_CDN_BASE}/gb-eng.svg`,
-  "southafrica": `${CRICAPI_FLAG_CDN_BASE}/za.svg`, "rsa": `${CRICAPI_FLAG_CDN_BASE}/za.svg`, "sa": `${CRICAPI_FLAG_CDN_BASE}/za.svg`, "saw": `${CRICAPI_FLAG_CDN_BASE}/za.svg`,
-  "pakistan": `${CRICAPI_FLAG_CDN_BASE}/pk.svg`, "pak": `${CRICAPI_FLAG_CDN_BASE}/pk.svg`, "pakw": `${CRICAPI_FLAG_CDN_BASE}/pk.svg`,
-  "newzealand": `${CRICAPI_FLAG_CDN_BASE}/nz.svg`, "nz": `${CRICAPI_FLAG_CDN_BASE}/nz.svg`, "nzw": `${CRICAPI_FLAG_CDN_BASE}/nz.svg`,
-  "westindies": `${CRICAPI_FLAG_CDN_BASE}/wi.svg`, "wi": `${CRICAPI_FLAG_CDN_BASE}/wi.svg`, "wiw": `${CRICAPI_FLAG_CDN_BASE}/wi.svg`,
-  "srilanka": `${CRICAPI_FLAG_CDN_BASE}/lk.svg`, "sl": `${CRICAPI_FLAG_CDN_BASE}/lk.svg`, "slw": `${CRICAPI_FLAG_CDN_BASE}/lk.svg`,
-  "bangladesh": `${CRICAPI_FLAG_CDN_BASE}/bd.svg`, "ban": `${CRICAPI_FLAG_CDN_BASE}/bd.svg`, "bd": `${CRICAPI_FLAG_CDN_BASE}/bd.svg`, "banw": `${CRICAPI_FLAG_CDN_BASE}/bd.svg`,
-  "afghanistan": `${CRICAPI_FLAG_CDN_BASE}/af.svg`, "afg": `${CRICAPI_FLAG_CDN_BASE}/af.svg`,
-  "zimbabwe": `${CRICAPI_FLAG_CDN_BASE}/zw.svg`, "zim": `${CRICAPI_FLAG_CDN_BASE}/zw.svg`, "zimw": `${CRICAPI_FLAG_CDN_BASE}/zw.svg`,
-  "ireland": `${CRICAPI_FLAG_CDN_BASE}/ie.svg`, "ire": `${CRICAPI_FLAG_CDN_BASE}/ie.svg`, "irew": `${CRICAPI_FLAG_CDN_BASE}/ie.svg`
+const GITHUB_CONFIG = {
+  owner: "vsdevelopers789-hash",
+  repo: "live-stream-data",
+  path: "matches.json",
+  branch: "main",
+  token: process.env.GITHUB_TOKEN // Render Environment Variable నుండి టోకెన్ తీసుకుంటుంది
 };
 
-async function preloadCricapiCountries() {
+let inMemoryMatchesCache = [];
+let inMemoryDeletedMatches = [];
+let inMemoryCategoryVisibility = { Cricket: true, IPL: true, Football: true };
+let inMemorySubCategories = { Cricket: {}, IPL: {}, Football: {} };
+let inMemoryTimerState = {};
+let inMemoryStreamSources = [];
+let serverDataVersion = Date.now().toString();
+
+// Keep-Alive Health Route (Prevents Render from sleeping)
+app.get('/ping', (req, res) => {
+  res.status(200).send('SERVER_ACTIVE_OK');
+});
+
+// =========================================================================
+// 2. GITHUB RAW JSON FILE FETCHER & PUSHER
+// =========================================================================
+
+async function fetchRawJsonFromGitHub() {
+  if (!GITHUB_CONFIG.token) throw new Error("GITHUB_TOKEN environment variable is missing!");
+
+  const fileUrl = `https://api.github.com/repos/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/contents/${GITHUB_CONFIG.path}?_t=${Date.now()}`;
+  const ghRes = await fetch(fileUrl, {
+    headers: {
+      "Authorization": `Bearer ${GITHUB_CONFIG.token}`,
+      "Accept": "application/vnd.github+json",
+      "User-Agent": "Render-Backend-LiveSync"
+    }
+  });
+
+  if (!ghRes.ok) throw new Error(`GitHub fetch failed: ${ghRes.statusText}`);
+
+  const fileData = await ghRes.json();
+  const rawCleanBase64 = fileData.content.replace(/\s/g, '');
+  const decodedContent = Buffer.from(rawCleanBase64, 'base64').toString('utf-8');
+  const parsedData = JSON.parse(decodedContent);
+
+  if (Array.isArray(parsedData.matches)) inMemoryMatchesCache = parsedData.matches;
+  if (Array.isArray(parsedData.deleted_matches)) inMemoryDeletedMatches = parsedData.deleted_matches;
+  if (parsedData.category_visibility) inMemoryCategoryVisibility = parsedData.category_visibility;
+  if (parsedData.sub_categories) inMemorySubCategories = parsedData.sub_categories;
+
+  return { parsedData, sha: fileData.sha };
+}
+
+async function pushJsonToGitHub(payload) {
+  if (!GITHUB_CONFIG.token) return false;
+
+  const fileUrl = `https://api.github.com/repos/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/contents/${GITHUB_CONFIG.path}`;
+  let fileSha = "";
+
   try {
-    const res = await fetch("https://api.cricapi.com/v1/countries?apikey=054d5acf-f4ca-4eda-bb3b-a547f2386ef5&offset=0");
-    if (res.ok) {
-      const json = await res.json();
-      if (json && json.status === "success" && Array.isArray(json.data)) {
-        json.data.forEach(item => {
-          if (item.genericFlag && item.name) {
-            const cleanName = item.name.toLowerCase().replace(/[^a-z0-9]/g, '');
-            DYNAMIC_COUNTRY_CDN_MAP[cleanName] = item.genericFlag;
-            if (item.id) DYNAMIC_COUNTRY_CDN_MAP[item.id.toLowerCase()] = item.genericFlag;
-          }
-        });
+    const getRes = await fetch(fileUrl + `?_t=${Date.now()}`, {
+      headers: {
+        "Authorization": `Bearer ${GITHUB_CONFIG.token}`,
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "Render-Backend-LiveSync"
       }
+    });
+    if (getRes.ok) {
+      const fData = await getRes.json();
+      fileSha = fData.sha;
     }
   } catch (e) {}
+
+  const contentEncoded = Buffer.from(JSON.stringify(payload, null, 2)).toString('base64');
+  const putRes = await fetch(fileUrl, {
+    method: "PUT",
+    headers: {
+      "Authorization": `Bearer ${GITHUB_CONFIG.token}`,
+      "Accept": "application/vnd.github+json",
+      "Content-Type": "application/json",
+      "User-Agent": "Render-Backend-LiveSync"
+    },
+    body: JSON.stringify({
+      message: `Render Auto-Sync: ${Date.now()}`,
+      content: contentEncoded,
+      sha: fileSha || undefined,
+      branch: GITHUB_CONFIG.branch
+    })
+  });
+
+  return putRes.ok;
 }
-preloadCricapiCountries();
+
+(async () => {
+  try {
+    await fetchRawJsonFromGitHub();
+    console.log("Successfully preloaded matches.json from GitHub into Render memory.");
+  } catch (e) {
+    console.warn("Preload warning:", e.message);
+  }
+})();
 
 // =========================================================================
-// 2. TEAM HELPERS
+// 3. RENDER REPLACEMENT APIS (RAW MATCHES, VERSION, TIMER, SOURCES, PARSER)
 // =========================================================================
-const TEAM_ALIASES = {
-  "ind": ["india", "ind", "indw", "indiaw", "indiawomen", "teamindia", "indians", "bcci"],
-  "nz":  ["newzealand", "nz", "nzw", "newzealandw", "whiteferns", "blackcaps"],
-  "aus": ["australia", "aus", "ausw", "australiaw", "australiawomen", "aussie", "aussies"],
-  "eng": ["england", "eng", "engw", "englandw", "englandwomen"],
-  "pak": ["pakistan", "pak", "pakw", "pakistanw", "pakistanwomen"],
-  "sa":  ["southafrica", "sa", "rsa", "saw", "southafricaw", "proteas"],
-  "wi":  ["westindies", "wi", "wiw", "windies", "westindiesw"],
-  "sl":  ["srilanka", "sl", "slw", "srilankaw", "srilankawomen"],
-  "ban": ["bangladesh", "ban", "bd", "banw", "bangladeshw", "tigers"],
-  "afg": ["afghanistan", "afg", "afghan"],
-  "zim": ["zimbabwe", "zim", "zimw", "zimbabwew", "zimbabwewomen", "chevrons"],
-  "ire": ["ireland", "ire", "irew", "irelandw"]
+
+app.get('/api/raw-matches', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  try {
+    if (inMemoryMatchesCache.length === 0) await fetchRawJsonFromGitHub();
+    res.status(200).json({
+      success: true,
+      v: serverDataVersion,
+      category_visibility: inMemoryCategoryVisibility,
+      sub_categories: inMemorySubCategories,
+      matches: inMemoryMatchesCache,
+      deleted_matches: inMemoryDeletedMatches
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get('/api/matches', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  try {
+    if (inMemoryMatchesCache.length === 0) await fetchRawJsonFromGitHub();
+    res.status(200).json({
+      v: serverDataVersion,
+      category_visibility: inMemoryCategoryVisibility,
+      sub_categories: inMemorySubCategories,
+      matches: inMemoryMatchesCache,
+      deleted_matches: inMemoryDeletedMatches
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/matches', async (req, res) => {
+  try {
+    const body = req.body || {};
+    if (body.matches) inMemoryMatchesCache = body.matches;
+    if (body.deleted_matches) inMemoryDeletedMatches = body.deleted_matches;
+    if (body.category_visibility) inMemoryCategoryVisibility = body.category_visibility;
+    if (body.sub_categories) inMemorySubCategories = body.sub_categories;
+    if (body.timerStatePayload) {
+      inMemoryTimerState = { ...inMemoryTimerState, ...body.timerStatePayload };
+      delete body.timerStatePayload;
+    }
+
+    serverDataVersion = Date.now().toString();
+    const fullPayload = {
+      category_visibility: inMemoryCategoryVisibility,
+      sub_categories: inMemorySubCategories,
+      matches: inMemoryMatchesCache,
+      deleted_matches: inMemoryDeletedMatches
+    };
+
+    pushJsonToGitHub(fullPayload).catch(e => {});
+    res.status(200).json({ success: true, v: serverDataVersion });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get('/api/matches/version', (req, res) => {
+  res.status(200).json({ v: serverDataVersion });
+});
+
+app.get('/api/timer-state', (req, res) => {
+  res.status(200).json(inMemoryTimerState);
+});
+
+// Stream Sources Pool
+app.get('/api/stream-sources', (req, res) => {
+  res.status(200).json(inMemoryStreamSources);
+});
+
+app.post('/api/stream-sources', (req, res) => {
+  const { id, label, url } = req.body;
+  if (!url) return res.status(400).json({ success: false });
+  if (id) {
+    inMemoryStreamSources = inMemoryStreamSources.map(s => s.id === id ? { ...s, label, url } : s);
+  } else {
+    inMemoryStreamSources.push({ id: 'src_' + Date.now(), label: label || "Feed", url });
+  }
+  res.status(200).json({ success: true, sources: inMemoryStreamSources });
+});
+
+app.post('/api/stream-sources/delete/:id', (req, res) => {
+  inMemoryStreamSources = inMemoryStreamSources.filter(s => s.id !== req.params.id);
+  res.status(200).json({ success: true, sources: inMemoryStreamSources });
+});
+
+// Parse Source API
+app.get('/api/parse-source', async (req, res) => {
+  const targetUrl = req.query.url;
+  if (!targetUrl) return res.status(400).json({ error: "Missing url" });
+  try {
+    const fetchRes = await fetch(targetUrl, {
+      headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/json" }
+    });
+    if (!fetchRes.ok) throw new Error("Feed fetch failed");
+    const data = await fetchRes.json();
+    const matches = [];
+    let rawList = Array.isArray(data) ? data : (data.matches || data.data || data.events || []);
+
+    rawList.forEach((m, idx) => {
+      let team1 = m.team_1 || m.team1 || m.t1 || m.homeTeam || "Team 1";
+      let team2 = m.team_2 || m.team2 || m.t2 || m.awayTeam || "Team 2";
+      let streamUrl = m.stream_url || m.url || m.link || "";
+
+      if (m.google_m3u8_hex) {
+        try {
+          let hex = m.google_m3u8_hex.trim();
+          let decoded = '';
+          for (let i = 0; i < hex.length; i += 2) decoded += String.fromCharCode(parseInt(hex.substr(i, 2), 16));
+          let lines = decoded.split('\n').filter(l => l.trim().startsWith('http'));
+          if (lines.length > 0) streamUrl = lines[lines.length - 1].trim();
+        } catch(e) {}
+      }
+
+      const servers = [];
+      if (streamUrl) {
+        servers.push({
+          name: "Live HD (1080p)",
+          url: streamUrl + (m.drm_key ? `|drmLicense=${m.drm_key}` : ""),
+          playerType: streamUrl.includes('.mpd') ? 'dash' : 'hls',
+          visible: true,
+          pos: 1
+        });
+      }
+
+      matches.push({
+        id: String(m.match_id || m.id || Date.now() + idx),
+        team_1: team1,
+        team_2: team2,
+        title: m.title || m.match_name || `${team1} vs ${team2}`,
+        category: m.category || "Cricket",
+        sub_category: m.sub_category || m.tournament || m.series || "",
+        card: m.card || m.banner || "",
+        servers: servers
+      });
+    });
+
+    res.status(200).json({ success: true, count: matches.length, matches });
+  } catch(err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// =========================================================================
+// 4. FLAGS CDN & SCORE FETCHING (CRICBUZZ)
+// =========================================================================
+const CRICAPI_FLAG_CDN_BASE = "https://cdorg.b-cdn.net/flags";
+let DYNAMIC_COUNTRY_CDN_MAP = {
+  "india": `${CRICAPI_FLAG_CDN_BASE}/in.svg`, "ind": `${CRICAPI_FLAG_CDN_BASE}/in.svg`,
+  "australia": `${CRICAPI_FLAG_CDN_BASE}/au.svg`, "aus": `${CRICAPI_FLAG_CDN_BASE}/au.svg`,
+  "england": `${CRICAPI_FLAG_CDN_BASE}/gb-eng.svg`, "eng": `${CRICAPI_FLAG_CDN_BASE}/gb-eng.svg`,
+  "southafrica": `${CRICAPI_FLAG_CDN_BASE}/za.svg`, "pakistan": `${CRICAPI_FLAG_CDN_BASE}/pk.svg`,
+  "newzealand": `${CRICAPI_FLAG_CDN_BASE}/nz.svg`, "srilanka": `${CRICAPI_FLAG_CDN_BASE}/lk.svg`,
+  "bangladesh": `${CRICAPI_FLAG_CDN_BASE}/bd.svg`, "afghanistan": `${CRICAPI_FLAG_CDN_BASE}/af.svg`
 };
 
-function getTeamFlagUrl(teamName) {
-  if (!teamName) return "";
-  const clean = String(teamName).toLowerCase().replace(/women|champions|u19|xi|national|team/g, '').replace(/[^a-z0-9]/g, '').trim();
-  if (DYNAMIC_COUNTRY_CDN_MAP[clean]) return DYNAMIC_COUNTRY_CDN_MAP[clean];
-  for (let key in DYNAMIC_COUNTRY_CDN_MAP) {
-    const kClean = key.replace(/[^a-z0-9]/g, '');
-    if (clean === kClean || (clean.length >= 3 && (clean.includes(kClean) || kClean.includes(clean)))) {
-      return DYNAMIC_COUNTRY_CDN_MAP[key];
-    }
-  }
-  for (const [code, aliases] of Object.entries(TEAM_ALIASES)) {
-    if (aliases.includes(clean) || aliases.some(a => clean.includes(a) || a.includes(clean))) {
-      return `${CRICAPI_FLAG_CDN_BASE}/${code}.svg`;
-    }
-  }
-  return "";
-}
-
-function isSameTeam(nameA, nameB) {
-  if (!nameA || !nameB) return false;
-  const a = String(nameA).toLowerCase().replace(/[^a-z0-9]/g, '');
-  const b = String(nameB).toLowerCase().replace(/[^a-z0-9]/g, '');
-  if (!a || !b) return false;
-  if (a === b) return true;
-  if (a.length >= 3 && b.length >= 3 && (a.includes(b) || b.includes(a))) return true;
-  for (const group of Object.values(TEAM_ALIASES)) {
-    const aIn = group.some(x => a === x || a.startsWith(x) || x.startsWith(a));
-    const bIn = group.some(x => b === x || b.startsWith(x) || x.startsWith(b));
-    if (aIn && bIn) return true;
-  }
-  return false;
-}
-
-function extractSeriesFromUrlSlug(urlStr) {
-  if (!urlStr || !urlStr.includes("cricbuzz.com")) return "";
-  const parts = urlStr.split('/');
-  const lastPart = parts[parts.length - 1] || parts[parts.length - 2] || "";
-  const cleanMatch = lastPart.replace(/^[a-z0-9]+-vs-[a-z0-9]+(?:-[0-9]+(?:st|nd|rd|th)?-match)?-/i, '');
-  if (cleanMatch && cleanMatch !== lastPart && cleanMatch.length > 3) {
-    return cleanMatch.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-  }
-  return "";
-}
-
-function parseToIsoDate(rawVal) {
-  if (!rawVal) return "";
-  try {
-    let epoch = 0;
-    if (typeof rawVal === 'number' || /^\d{10,13}$/.test(String(rawVal).trim())) {
-      epoch = parseInt(String(rawVal).trim());
-      if (String(epoch).length === 10) epoch *= 1000;
-    } else {
-      epoch = new Date(rawVal).getTime();
-    }
-    if (epoch && !isNaN(epoch)) return new Date(epoch).toISOString();
-  } catch(e) {}
-  return "";
-}
-
-function calculateSeriesSmartTime(startDateVal, seriesOrFormatText, isFinished) {
-  if (!startDateVal) return "";
-  try {
-    let startEpoch = 0;
-    if (typeof startDateVal === 'number' || /^\d{10,13}$/.test(String(startDateVal).trim())) {
-      startEpoch = parseInt(String(startDateVal).trim());
-      if (String(startEpoch).length === 10) startEpoch *= 1000;
-    } else {
-      startEpoch = new Date(startDateVal).getTime();
-    }
-    if (!startEpoch || isNaN(startEpoch)) return "";
-    if (!isFinished) return new Date(startEpoch).toISOString();
-    const text = String(seriesOrFormatText || '').toLowerCase();
-    let playingDurationHours = (text.includes('test')) ? 7.0 : ((text.includes('odi')) ? 8.0 : 3.5);
-    return new Date(startEpoch + (playingDurationHours + 3.0) * 3600000).toISOString();
-  } catch (e) {
-    return "";
-  }
-}
-
-// =========================================================================
-// 3. COMPLETE LIVE SCORE ROUTE
-// =========================================================================
 app.get('/api/fetch-score', async (req, res) => {
   const target = req.query.id || "";
-  const t1Query = (req.query.t1 || "").trim();
-  const t2Query = (req.query.t2 || "").trim();
-
-  if (!target) {
-    return res.status(400).json({ success: false, message: "Missing id/url parameter" });
-  }
+  if (!target) return res.status(400).json({ success: false, message: "Missing id/url" });
 
   try {
     let cbMatchId = target;
-    const m = target.match(/(?:cricket-scores|live-cricket-scores|cricket-match-highlights)\/(\d+)/i) || target.match(/\/(\d+)/) || target.match(/\d{5,7}/);
+    const m = target.match(/\/(\d+)/) || target.match(/\d{5,7}/);
     if (m && m[1]) cbMatchId = m[1];
-    else if (m && m[0]) cbMatchId = m[0];
 
-    const detectedSeries = extractSeriesFromUrlSlug(target);
     const cbUrl = `https://www.cricbuzz.com/api/cricket-match/commentary/${cbMatchId}`;
-    const cbInfoUrl = `https://www.cricbuzz.com/api/cricket-match/info/${cbMatchId}`;
-    const mobileWebUrl = `https://m.cricbuzz.com/cricket-commentary/${cbMatchId}`;
-
-    const headers = {
-      "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
-      "Accept": "application/json, text/html, */*",
-      "Referer": "https://m.cricbuzz.com/"
-    };
-
-    let mHeader = {};
-    let minScore = {};
-    let cbJson = {};
-    let infoJson = {};
-    let rawStart = null;
-    let htmlText = "";
-
-    const results = await Promise.allSettled([
-      fetch(cbUrl, { headers }),
-      fetch(cbInfoUrl, { headers }),
-      fetch(mobileWebUrl, { headers })
-    ]);
-
-    if (results[0].status === "fulfilled" && results[0].value.ok) {
-      try { cbJson = await results[0].value.json(); mHeader = cbJson.matchHeader || {}; minScore = cbJson.miniscore || {}; } catch(e){}
-    }
-    if (results[1].status === "fulfilled" && results[1].value.ok) {
-      try { infoJson = await results[1].value.json(); } catch(e){}
-    }
-    if (results[2].status === "fulfilled" && results[2].value.ok) {
-      try { htmlText = await results[2].value.text(); } catch(e){}
-    }
-
-    rawStart = infoJson.matchInfo?.startDate || infoJson.startDate || mHeader.startDate || mHeader.matchStartTimestamp;
-
-    // టీమ్ పేర్లు
-    let t1Name = mHeader.team1?.name || mHeader.team1?.sName || infoJson.matchInfo?.team1?.name || "New Zealand";
-    let t2Name = mHeader.team2?.name || mHeader.team2?.sName || infoJson.matchInfo?.team2?.name || "India";
-
-    const outT1 = t1Query || t1Name;
-    const outT2 = t2Query || t2Name;
+    const headers = { "User-Agent": "Mozilla/5.0" };
+    const cbRes = await fetch(cbUrl, { headers });
+    if (!cbRes.ok) throw new Error("Cricbuzz fetch failed");
+    
+    const cbJson = await cbRes.json();
+    const mHeader = cbJson.matchHeader || {};
+    const minScore = cbJson.miniscore || {};
 
     let s1 = "", s2 = "";
+    const inningsList = minScore.matchScoreDetails?.inningsScoreList || [];
+    inningsList.forEach(sc => {
+      const formatted = `${sc.score || sc.runs}/${sc.wickets || 0} (${sc.overs || 0} ov)`;
+      if (sc.inningsId === 1) s1 = formatted;
+      else if (sc.inningsId === 2) s2 = formatted;
+    });
 
-    // 1. అఫీషియల్ JSON API నుండి స్కోర్ల సేకరణ
-    const inningsList = minScore.matchScoreDetails?.inningsScoreList || cbJson.miniscore?.matchScoreDetails?.inningsScoreList || [];
-    if (inningsList.length > 0) {
-      inningsList.forEach(sc => {
-        const r = sc.score ?? sc.runs ?? 0;
-        let w = sc.wickets !== undefined ? `/${sc.wickets}` : (sc.isAllOut ? '/10' : '');
-        let ov = sc.overs ?? sc.ovrs ?? "";
-        let ovStr = (ov !== "" && ov !== undefined) ? ` (${ov} ov)` : '';
-        const formatted = `${r}${w}${ovStr}`.trim();
-
-        if (sc.inningsId === 1 || inningsList.indexOf(sc) === 0) {
-          s1 = formatted;
-        } else if (sc.inningsId === 2 || inningsList.indexOf(sc) === 1) {
-          s2 = formatted;
-        }
-      });
-    }
-
-    // 2. HTML నుండి లైవ్ హెడర్ స్కోర్ల నిర్ధారణ
-    if (htmlText) {
-      const liveRegex = /(?:IND|India|NZ|New Zealand)\s+([0-9]{1,4}(?:-[0-9]{1,2}|\/[0-9]{1,2})?)\s*\(([0-9\.]+)\)/i;
-      const liveM = htmlText.match(liveRegex);
-      if (liveM) {
-        const liveTeamKey = liveM[0].split(/\s+/)[0];
-        const runs = liveM[1].replace('-', '/');
-        const overs = liveM[2];
-        const parsedLive = `${runs} (${overs} ov)`;
-
-        if (isSameTeam(outT2, liveTeamKey)) {
-          s2 = parsedLive;
-        } else if (isSameTeam(outT1, liveTeamKey)) {
-          s1 = parsedLive;
-        }
-      }
-
-      if (!s1 || s1.includes("undefined") || !s1.includes("ov")) {
-        const inn1Match = htmlText.match(/185\s*(?:\/10|-10)?\s*\((40\.2)\)/i) || htmlText.match(/185\s*\(([\d\.]+)\)/i);
-        if (inn1Match) {
-          s1 = `185/10 (${inn1Match[1]} ov)`;
-        } else {
-          s1 = "185/10 (40.2 ov)";
-        }
-      }
-    }
-
-    if (s1 && !s1.includes('/')) s1 = s1.replace(/(\d+)/, "$1/10");
-
-    // =========================================================================
-    // 3. కచ్చితమైన ఫలితం / లైవ్ నోటీస్ (ఒమన్ వంటి ఇతర జట్లు రాకుండా పక్కా ఫిల్టరింగ్)
-    // =========================================================================
-    let statusNotice = "";
-
-    // A. Cricbuzz అఫీషియల్ రిజల్ట్ / స్టేటస్ ఆబ్జెక్ట్
-    const officialMsg = mHeader.result?.message 
-                     || infoJson.matchInfo?.result?.message 
-                     || minScore.matchScoreDetails?.customStatus 
-                     || mHeader.status 
-                     || cbJson.status 
-                     || "";
-
-    const officialLower = officialMsg.toLowerCase();
-    const state = (mHeader.state || infoJson.matchInfo?.state || "").toLowerCase();
-
-    // మ్యాచ్ పూర్తయ్యిందా లేదా తనిఖీ
-    const isFinished = state === "complete" || state === "finished" 
-                    || officialLower.includes("won by") 
-                    || officialLower.includes("beat") 
-                    || officialLower.includes("match drawn");
-
-    if (isFinished) {
-      statusNotice = officialMsg;
-    }
-
-    // B. లైవ్ అయితే HTML నుండి కేవలం ఈ మ్యాచ్ జట్ల (India / New Zealand) నోటీస్ మాత్రమే తీసుకోవడం
-    if (!statusNotice && htmlText) {
-      // ఇండియా లేదా న్యూజిలాండ్ పేరున్న సమీకరణాలను మాత్రమే స్వీకరించాలి
-      const cleanRegex = new RegExp(`(?:${outT1}|${outT2}|IND|NZ|India|New Zealand)\\s+need\\s+\\d+\\s+runs[^<"'\n]*`, "i");
-      const noticeMatch = htmlText.match(cleanRegex);
-      if (noticeMatch) {
-        statusNotice = noticeMatch[0]
-          .replace(/<[^>]+>/g, '')
-          .replace(/href="[^"]*"/gi, '')
-          .replace(/["'=]+/g, ' ')
-          .replace(/\s+/g, ' ')
-          .trim();
-      }
-    }
-
-    // C. ఒకవేళ నోటీస్ ఇంకా ఖాళీగా ఉంటే API బాల్స్/రన్స్
-    if (!statusNotice && minScore.remRuns) {
-      const remB = minScore.remBalls ? ` in ${minScore.remBalls} balls` : '';
-      statusNotice = `${outT2} need ${minScore.remRuns} runs${remB}`;
-    }
-
-    // D. ఫాల్‌బ్యాక్
-    if (!statusNotice) {
-      statusNotice = isFinished ? `${outT2} won the match` : `${outT2} need runs to win`;
-    }
-
-    const isSecondInnings = Boolean(s2 || statusNotice.toLowerCase().includes("need"));
-    let dynamicBadge = isFinished ? "MATCH ENDED" : (isSecondInnings ? "2ND INNINGS" : "1ST INNINGS");
-
-    const matchStartTimeIso = parseToIsoDate(rawStart);
-    const calculatedFinishedIso = calculateSeriesSmartTime(rawStart, detectedSeries, isFinished);
-
-    return res.json({
+    res.json({
       success: true,
-      source: "cricbuzz",
-      matchId: cbMatchId,
-      series: detectedSeries || mHeader.seriesName || "1st ODI, India tour of New Zealand 2026",
-      t1: outT1,
-      t2: outT2,
-      t1_img: getTeamFlagUrl(outT1),
-      t2_img: getTeamFlagUrl(outT2),
+      t1: mHeader.team1?.name || "Team 1",
+      t2: mHeader.team2?.name || "Team 2",
       t1_score: s1,
       t2_score: s2,
-      statusNotice: statusNotice,
-      dynamicBadge: dynamicBadge,
-      targetEquation: statusNotice,
-      isLive: !isFinished,
-      isFinished: Boolean(isFinished),
-      startTimeGMT: matchStartTimeIso,
-      dateTimeGMT: matchStartTimeIso,
-      startDate: matchStartTimeIso,
-      calculatedFinishedDate: calculatedFinishedIso
+      isLive: mHeader.state === "inprogress",
+      isFinished: mHeader.state === "complete"
     });
   } catch (error) {
-    return res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Render Server running on port ${PORT}`));
