@@ -2,14 +2,12 @@ const express = require('express');
 const cors = require('cors');
 
 const app = express();
-
-// CORS & JSON Body Parsing
 app.use(cors());
 app.use(express.json({ limit: '15mb' }));
 app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 
 // =========================================================================
-// 1. GITHUB CONFIGURATION & IN-MEMORY CACHE (ENVIRONMENT VARIABLE SECURED)
+// 1. GITHUB CONFIGURATION & IN-MEMORY CACHE
 // =========================================================================
 const GITHUB_CONFIG = {
   owner: "vsdevelopers789-hash",
@@ -35,7 +33,6 @@ app.get('/ping', (req, res) => {
 // =========================================================================
 // 2. GITHUB RAW JSON FILE FETCHER & PUSHER
 // =========================================================================
-
 async function fetchRawJsonFromGitHub() {
   if (!GITHUB_CONFIG.token) throw new Error("GITHUB_TOKEN environment variable is missing!");
 
@@ -115,7 +112,6 @@ async function pushJsonToGitHub(payload) {
 // =========================================================================
 // 3. RENDER REPLACEMENT APIS (RAW MATCHES, VERSION, TIMER, SOURCES, PARSER)
 // =========================================================================
-
 app.get('/api/raw-matches', async (req, res) => {
   res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
   try {
@@ -205,76 +201,94 @@ app.post('/api/stream-sources/delete/:id', (req, res) => {
   res.status(200).json({ success: true, sources: inMemoryStreamSources });
 });
 
-// Parse Source API
+// Parse Source API (Supports 'Matches', 'CnpTV' & 'drm_key')
 app.get('/api/parse-source', async (req, res) => {
   const targetUrl = req.query.url;
   if (!targetUrl) return res.status(400).json({ error: "Missing url" });
+
   try {
     const fetchRes = await fetch(targetUrl, {
       headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/json" }
     });
     if (!fetchRes.ok) throw new Error("Feed fetch failed");
+
     const data = await fetchRes.json();
-    const matches = [];
-    let rawList = Array.isArray(data) ? data : (data.matches || data.data || data.events || []);
+    const extractedMatches = [];
+    let rawList = Array.isArray(data) ? data : (data.Matches || data.matches || data.data || data.events || []);
 
-    rawList.forEach((m, idx) => {
-      let team1 = m.team_1 || m.team1 || m.t1 || m.homeTeam || "Team 1";
-      let team2 = m.team_2 || m.team2 || m.t2 || m.awayTeam || "Team 2";
-      let streamUrl = m.stream_url || m.url || m.link || "";
-
-      if (m.google_m3u8_hex) {
-        try {
-          let hex = m.google_m3u8_hex.trim();
-          let decoded = '';
-          for (let i = 0; i < hex.length; i += 2) decoded += String.fromCharCode(parseInt(hex.substr(i, 2), 16));
-          let lines = decoded.split('\n').filter(l => l.trim().startsWith('http'));
-          if (lines.length > 0) streamUrl = lines[lines.length - 1].trim();
-        } catch(e) {}
+    rawList.forEach((match, mIdx) => {
+      let team1 = match.team_1 || match.t1 || "Team 1";
+      let team2 = match.team_2 || match.t2 || "Team 2";
+      const titleText = match.event_name || match.title || "";
+      if (titleText.includes(" vs ")) {
+        const parts = titleText.split(" vs ");
+        if (parts.length === 2 && team1 === "Team 1") {
+          team1 = parts[0].trim();
+          team2 = parts[1].trim();
+        }
       }
 
-      const servers = [];
-      if (streamUrl) {
-        servers.push({
-          name: "Live HD (1080p)",
-          url: streamUrl + (m.drm_key ? `|drmLicense=${m.drm_key}` : ""),
-          playerType: streamUrl.includes('.mpd') ? 'dash' : 'hls',
-          visible: true,
-          pos: 1
+      const srvList = [];
+      let posCounter = 1;
+
+      if (match.CnpTV) {
+        Object.keys(match.CnpTV).forEach(srvKey => {
+          const sUrl = match.CnpTV[srvKey];
+          if (sUrl && typeof sUrl === 'string' && sUrl.startsWith('http')) {
+            srvList.push({
+              name: `${match.event_name || 'Match'} (${srvKey.replace(/_/g, ' ').toUpperCase()})`,
+              url: sUrl + (match.drm_key ? `|drmLicense=${match.drm_key}` : ""),
+              isBrowser: false,
+              playerType: sUrl.includes('.mpd') ? 'dash' : 'hls',
+              visible: true,
+              pos: posCounter++
+            });
+          }
+        });
+      } else if (match.stream_url_alpha) {
+        Object.keys(match.stream_url_alpha).forEach(alphaKey => {
+          const aUrl = match.stream_url_alpha[alphaKey];
+          if (aUrl && typeof aUrl === 'string' && aUrl.startsWith('http')) {
+            srvList.push({
+              name: `${match.event_name || 'Match'} - ${alphaKey}`,
+              url: aUrl + (match.drm_key ? `|drmLicense=${match.drm_key}` : ""),
+              isBrowser: false,
+              playerType: aUrl.includes('.mpd') ? 'dash' : 'hls',
+              visible: true,
+              pos: posCounter++
+            });
+          }
         });
       }
 
-      matches.push({
-        id: String(m.match_id || m.id || Date.now() + idx),
-        team_1: team1,
-        team_2: team2,
-        title: m.title || m.match_name || `${team1} vs ${team2}`,
-        category: m.category || "Cricket",
-        sub_category: m.sub_category || m.tournament || m.series || "",
-        card: m.card || m.banner || "",
-        servers: servers
-      });
+      if (srvList.length > 0) {
+        extractedMatches.push({
+          id: String(match.match_id || match.id || `match_${mIdx}_${Date.now()}`),
+          title: titleText || `${team1} vs ${team2}`,
+          team_1: team1,
+          team_2: team2,
+          category: "Cricket",
+          sub_category: titleText,
+          card: match.banner || match.card || "",
+          status: "live",
+          servers: srvList
+        });
+      }
     });
 
-    res.status(200).json({ success: true, count: matches.length, matches });
+    res.status(200).json({
+      success: true,
+      count: extractedMatches.length,
+      matches: extractedMatches
+    });
   } catch(err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
 // =========================================================================
-// 4. FLAGS CDN & SCORE FETCHING (CRICBUZZ)
+// 4. LIVE CRICKET SCORE ROUTE (CRICBUZZ)
 // =========================================================================
-const CRICAPI_FLAG_CDN_BASE = "https://cdorg.b-cdn.net/flags";
-let DYNAMIC_COUNTRY_CDN_MAP = {
-  "india": `${CRICAPI_FLAG_CDN_BASE}/in.svg`, "ind": `${CRICAPI_FLAG_CDN_BASE}/in.svg`,
-  "australia": `${CRICAPI_FLAG_CDN_BASE}/au.svg`, "aus": `${CRICAPI_FLAG_CDN_BASE}/au.svg`,
-  "england": `${CRICAPI_FLAG_CDN_BASE}/gb-eng.svg`, "eng": `${CRICAPI_FLAG_CDN_BASE}/gb-eng.svg`,
-  "southafrica": `${CRICAPI_FLAG_CDN_BASE}/za.svg`, "pakistan": `${CRICAPI_FLAG_CDN_BASE}/pk.svg`,
-  "newzealand": `${CRICAPI_FLAG_CDN_BASE}/nz.svg`, "srilanka": `${CRICAPI_FLAG_CDN_BASE}/lk.svg`,
-  "bangladesh": `${CRICAPI_FLAG_CDN_BASE}/bd.svg`, "afghanistan": `${CRICAPI_FLAG_CDN_BASE}/af.svg`
-};
-
 app.get('/api/fetch-score', async (req, res) => {
   const target = req.query.id || "";
   if (!target) return res.status(400).json({ success: false, message: "Missing id/url" });
@@ -315,5 +329,8 @@ app.get('/api/fetch-score', async (req, res) => {
   }
 });
 
+// =========================================================================
+// 5. LISTEN ON PORT
+// =========================================================================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Render Server running on port ${PORT}`));
