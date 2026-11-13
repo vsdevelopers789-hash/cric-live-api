@@ -201,7 +201,7 @@ app.post('/api/stream-sources/delete/:id', (req, res) => {
   res.status(200).json({ success: true, sources: inMemoryStreamSources });
 });
 
-// Parse Source API (Supports 'Matches', 'CnpTV' & 'drm_key')
+// Parse Source API (Supports 'Matches', 'CnpTV', 'drm_key', Status, Time & Timezone)
 app.get('/api/parse-source', async (req, res) => {
   const targetUrl = req.query.url;
   if (!targetUrl) return res.status(400).json({ error: "Missing url" });
@@ -220,6 +220,7 @@ app.get('/api/parse-source', async (req, res) => {
       let team1 = match.team_1 || match.t1 || "Team 1";
       let team2 = match.team_2 || match.t2 || "Team 2";
       const titleText = match.event_name || match.title || "";
+      
       if (titleText.includes(" vs ")) {
         const parts = titleText.split(" vs ");
         if (parts.length === 2 && team1 === "Team 1") {
@@ -227,6 +228,17 @@ app.get('/api/parse-source', async (req, res) => {
           team2 = parts[1].trim();
         }
       }
+
+      // Match Status Mapping (Live, Finished, Upcoming)
+      let rawStatus = (match.status || match.match_status || "live").toLowerCase();
+      let matchStatus = "live";
+      if (rawStatus.includes("finish") || rawStatus.includes("ended") || rawStatus.includes("ft") || rawStatus.includes("completed") || rawStatus.includes("ltvp")) {
+        matchStatus = rawStatus.includes("finish") || rawStatus.includes("ended") || rawStatus.includes("ft") ? "finished" : "live";
+      }
+
+      // Date, Time & Timezone Extraction
+      const matchTime = match.time || match.match_time || match.date_time || match.date || "";
+      const matchTimezone = match.timezone || match.tz || "IST";
 
       const srvList = [];
       let posCounter = 1;
@@ -262,15 +274,19 @@ app.get('/api/parse-source', async (req, res) => {
       }
 
       if (srvList.length > 0) {
+        const matchId = String(match.match_id || match.id || `match_${mIdx}_${Date.now()}`);
+
         extractedMatches.push({
-          id: String(match.match_id || match.id || `match_${mIdx}_${Date.now()}`),
+          id: matchId,
           title: titleText || `${team1} vs ${team2}`,
           team_1: team1,
           team_2: team2,
           category: "Cricket",
           sub_category: titleText,
           card: match.banner || match.card || "",
-          status: "live",
+          status: matchStatus,
+          time: matchTime,
+          timezone: matchTimezone,
           servers: srvList
         });
       }
