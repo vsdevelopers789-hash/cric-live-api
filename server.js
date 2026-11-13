@@ -201,7 +201,7 @@ app.post('/api/stream-sources/delete/:id', (req, res) => {
   res.status(200).json({ success: true, sources: inMemoryStreamSources });
 });
 
-// Parse Source API (Supports 'Matches', 'CnpTV', 'drm_key', Status, Time & Timezone)
+// Parse Source API (Robust Time, Timezone & Status Extraction)
 app.get('/api/parse-source', async (req, res) => {
   const targetUrl = req.query.url;
   if (!targetUrl) return res.status(400).json({ error: "Missing url" });
@@ -229,16 +229,16 @@ app.get('/api/parse-source', async (req, res) => {
         }
       }
 
-      // Match Status Mapping (Live, Finished, Upcoming)
+      // Match Status Mapping (Live vs Finished)
       let rawStatus = (match.status || match.match_status || "live").toLowerCase();
       let matchStatus = "live";
       if (rawStatus.includes("finish") || rawStatus.includes("ended") || rawStatus.includes("ft") || rawStatus.includes("completed") || rawStatus.includes("ltvp")) {
         matchStatus = rawStatus.includes("finish") || rawStatus.includes("ended") || rawStatus.includes("ft") ? "finished" : "live";
       }
 
-      // Date, Time & Timezone Extraction
-      const matchTime = match.time || match.match_time || match.date_time || match.date || "";
-      const matchTimezone = match.timezone || match.tz || "IST";
+      // Robust Date, Time & Timezone Extraction
+      const matchTime = match.time || match.match_time || match.date_time || match.date || match.start_time || match.finished_at || "";
+      const matchTimezone = match.timezone || match.tz || match.time_zone || "IST";
 
       const srvList = [];
       let posCounter = 1;
