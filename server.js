@@ -138,10 +138,19 @@ function parseM3U(text, source) {
   return channels;
 }
 
+
+function cleanSourceUrl(value) {
+  let url = String(value ?? '').trim();
+  // Accept URLs pasted as Markdown links as well as plain JSON strings.
+  const markdown = url.match(/^\[[^\]]*\]\((https?:\/\/[^\s)]+)\)$/i);
+  if (markdown) url = markdown[1];
+  return url.replace(/^&lt;/i, '<').replace(/&gt;$/i, '>').replace(/^<|>$/g, '').trim();
+}
+
 function normaliseChannelEntry(item, source, index) {
   const name = String(item.name || item.channel_name || item.tvg_name || item.title || item.tvgName || `Channel ${index + 1}`).trim();
   const channelId = String(item.id || item.channel_id || item.tvg_id || item.tvgId || name).trim();
-  const url = String(item.raw_url || item.url || item.stream_url || item.stream || item.play_url || '').trim();
+  const url = cleanSourceUrl(item.raw_url || item.url || item.stream_url || item.stream || item.play_url || '');
   if (!/^https?:\/\//i.test(url)) return null;
   const logo = String(item.logo || item.tvg_logo || item.tvgLogo || item.icon || item.image || '').trim();
   const playerType = /\.mpd(?:$|\?)/i.test(url) ? 'dash' : (/\.m3u8?(?:$|\?)/i.test(url) ? 'hls' : 'file');
@@ -219,13 +228,45 @@ async function fetchAndParseSource(source) {
     return list.map((m, i) => {
       const title = String(m.event_name || m.title || m.synopsis || m.name || '').trim();
       const { t1, t2 } = extractTeams(m, title);
-      const serverMap = [m.CnpTV, m.stream_url_alpha, m.stream_url_bravo, m.streams].find(x => x && (Array.isArray(x) ? x.length > 0 : Object.keys(x).length > 0)) || {};
-      const serverEntries = Array.isArray(serverMap)
-        ? serverMap.map((v, n) => [v.name || `Server ${n + 1}`, v.url || v.raw_url || v])
-        : Object.entries(serverMap || {});
-      const servers = serverEntries.filter(([, v]) => typeof v === 'string' && /^https?:\/\//i.test(v)).map(([k, v], n) => ({
-        name: `${title || t1 || 'Live'} (${k})`, url: v,
-        isBrowser: false, playerType: /\.mpd(?:$|\?)/i.test(v) ? 'dash' : (/\.m3u8?(?:$|\?)/i.test(v) ? 'hls' : 'file'), sourceManaged: true, visible: true, pos: n + 1
+      // Merge every provider group; the old code selected only the first non-empty
+      // object and silently discarded the remaining CDN/server alternatives.
+      const serverGroups = [
+        ['CnpTV', m.CnpTV], ['Alpha', m.stream_url_alpha],
+        ['Bravo', m.stream_url_bravo], ['Streams', m.streams]
+      ];
+      const serverEntries = [];
+      for (const [groupName, group] of serverGroups) {
+        if (!group) continue;
+        const entries = Array.isArray(group)
+          ? group.map((v, n) => [v?.name || `${groupName} Server ${n + 1}`, v])
+          : (typeof group === 'object' ? Object.entries(group) : []);
+        for (const [key, value] of entries) {
+          const entry = typeof value === 'string' ? { url: value } : (value && typeof value === 'object' ? value : {});
+          const streamUrl = cleanSourceUrl(entry.url || entry.raw_url || entry.stream_url || entry.play_url || entry.src || (typeof value === 'string' ? value : ''));
+          if (!/^https?:\/\//i.test(streamUrl)) continue;
+          serverEntries.push({
+            name: String(entry.name || `${groupName} ${key}`).trim(),
+            url: streamUrl,
+            headers: entry.headers && typeof entry.headers === 'object' ? entry.headers : {},
+            playerType: /\.mpd(?:$|[?#])/i.test(streamUrl) ? 'dash' : (/\.m3u8?(?:$|[?#])/i.test(streamUrl) ? 'hls' : 'file')
+          });
+        }
+      }
+      const seenStreamUrls = new Set();
+      const servers = serverEntries.filter(entry => {
+        const key = entry.url;
+        if (seenStreamUrls.has(key)) return false;
+        seenStreamUrls.add(key); return true;
+      }).map((entry, n) => ({
+        name: `${title || t1 || 'Live'} (${entry.name})`, url: entry.url,
+        headers: entry.headers, isBrowser: false, playerType: entry.playerType,
+        sourceManaged: true, visible: true, pos: n + 1,
+        drmProtected: !!m.drm_key || !!m.drm || !!m.license_url || !!m.licenseUrl,
+        drmSystem: m.drm_system || m.drmSystem || '',
+        drmScheme: m.drm_scheme || m.drmScheme || m.drm_scheme_type || '',
+        // Only accept an official license endpoint. A content decryption key is
+        // not a license URL and is deliberately never appended to the stream URL.
+        licenseUrl: m.license_url || m.licenseUrl || m.widevine_license_url || m.widevineLicenseUrl || ''
       }));
       const hasMatchDetails = !!(t1 && t2 && title);
       if (!hasMatchDetails && servers.length) {
@@ -237,9 +278,15 @@ async function fetchAndParseSource(source) {
         team_1: t1, team_2: t2, team_1_logo: m.team_1_logo || m.t1_logo || m.home_team_logo || m.team1_logo || '', team_2_logo: m.team_2_logo || m.t2_logo || m.away_team_logo || m.team2_logo || '', category: m.category || m.sport || m.game || 'Cricket',
         sub_category: m.sub_category || m.series || title || `${t1} vs ${t2}`,
         card: m.banner || m.card || m.image || m.cover_image || '',
+        synopsis: m.synopsis || m.description || '',
         status: /finish|ended|\bft\b|complete/i.test(String(m.status || m.match_status || 'live')) ? 'finished' : 'live',
         time: m.time || m.match_time || m.date_time || m.date || m.start_time || '',
-        timezone: m.timezone || m.tz || 'Asia/Kolkata', servers };
+        timezone: m.timezone || m.tz || 'Asia/Kolkata',
+        drmProtected: !!m.drm_key || !!m.drm || !!m.license_url || !!m.licenseUrl,
+        drmSystem: m.drm_system || m.drmSystem || '',
+        drmScheme: m.drm_scheme || m.drmScheme || m.drm_scheme_type || '',
+        licenseUrl: m.license_url || m.licenseUrl || m.widevine_license_url || m.widevineLicenseUrl || '',
+        servers };
     }).filter(m => m.servers && m.servers.length);
   } finally { clearTimeout(timeout); }
 }
