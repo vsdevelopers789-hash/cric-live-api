@@ -102,39 +102,27 @@ function parseM3U(text, source) {
       const a = pending.attrs;
       const channelName = a['tvg-name'] || pending.displayName;
       const channelId = a['tvg-id'] || channelName;
-      const logo = a['tvg-logo'] || a['logo'] || '';
-      const networkLogo = a['group-logo'] || a['tvg-network-logo'] || a['network-logo'] || '';
-      const networkName = a['tvg-network'] || a['network'] || source.label || 'Live TV Network';
+      const logo = a['tvg-logo'] || '';
       const serverName = `${channelName}${a['group-title'] ? ` · ${a['group-title']}` : ''}`;
       const headers = { ...pendingHeaders };
       if (pendingOptions['http-user-agent']) headers['User-Agent'] = pendingOptions['http-user-agent'];
       if (pendingOptions['http-referrer']) headers['Referer'] = pendingOptions['http-referrer'];
       if (pendingOptions['http-cookie']) headers['Cookie'] = pendingOptions['http-cookie'];
       let url = line;
-      const playerType = /\.mpd(?:$|[?#])/i.test(url) ? 'dash' : (/\.m3u8?(?:$|[?#])/i.test(url) ? 'hls' : (/\.(?:mp4|m4v|webm|mov|ts|aac|mp3|m4a)(?:$|[?#])/i.test(url) ? 'direct' : 'auto'));
-      const isEmbed = /(?:youtube\.com|youtu\.be|\.php(?:$|[?#])|\/embed\/)/i.test(url) && !/\.m3u8?(?:$|[?#])/i.test(url);
+      const playerType = /\.mpd(?:$|\?)/i.test(url) ? 'dash' : (/\.m3u8?(?:$|\?)/i.test(url) ? 'hls' : 'iframe');
       const stable = `${source.id}:${channelId}`;
       channels.push({
         id: stable, fb_key: `m3u_${Buffer.from(stable).toString('base64url').slice(0, 48)}`,
         sourceId: source.id, sourceLabel: source.label || 'Feed', isChannelCard: true,
-        channelId, channelName, groupTitle: a['group-title'] || currentGroup, networkName, networkLogo,
-        logo, card: networkLogo || logo, category: 'Others', sub_category: 'Live TV',
-        title: channelName, team_1: '', team_2: '', status: 'live', time: '', timezone: 'Asia/Kolkata',
-        servers: [{ id: `${stable}:server`, name: channelName, logo, url, headers, isBrowser: isEmbed, playerType, visible: true, pos: 1 }]
+        channelId, channelName, groupTitle: a['group-title'] || currentGroup,
+        logo, card: logo, category: 'Cricket', sub_category: a['group-title'] || currentGroup,
+        title: channelName, team_1: channelName, team_2: '', status: 'live', time: '', timezone: 'Asia/Kolkata',
+        servers: [{ id: `${stable}:server`, name: serverName, url, headers, isBrowser: playerType === 'iframe', playerType, visible: true, pos: 1 }]
       });
       pending = null;
     }
   }
-  if (!channels.length) return [];
-  const networkName = channels.find(c => c.networkName)?.networkName || source.label || 'Live TV Network';
-  const explicitNetworkLogo = channels.find(c => c.networkLogo)?.networkLogo || '';
-  const bannerLogo = explicitNetworkLogo || channels.find(c => c.logo)?.logo || '';
-  const stable = `${source.id}:network`;
-  return [{ id: stable, fb_key: `m3u_${Buffer.from(stable).toString('base64url').slice(0, 48)}`, sourceId: source.id,
-    sourceLabel: source.label || 'Feed', isChannelCard: true, isNetworkCard: true, channelId: 'network',
-    channelName: networkName, networkName, groupTitle: 'Live TV Network', logo: bannerLogo, card: bannerLogo,
-    category: 'Others', sub_category: 'Live TV', title: networkName, team_1: '', team_2: '', status: 'live', time: '', timezone: 'Asia/Kolkata',
-    servers: channels.flatMap(c => c.servers.map(srv => ({ ...srv, name: c.channelName, logo: c.logo, channelName: c.channelName, channelId: c.channelId }))) }];
+  return channels;
 }
 
 async function fetchAndParseSource(source) {
@@ -215,8 +203,8 @@ app.get('/api/stream-sources', (_req, res) => res.setHeader('Cache-Control', 'no
 app.post('/api/stream-sources', (req, res) => {
   const { id, label, url } = req.body || {};
   if (!url || !/^https?:\/\//i.test(url)) return res.status(400).json({ success: false, error: 'Valid HTTP/HTTPS URL required' });
-  if (id) inMemoryStreamSources = inMemoryStreamSources.map(s => s.id === id ? { ...s, label: label || 'Feed', url, ...(typeof req.body.approved === 'boolean' ? { approved: req.body.approved } : {}), ...(req.body.targetDatabase ? { targetDatabase: req.body.targetDatabase } : {}) } : s);
-  else inMemoryStreamSources.push({ id: `src_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, label: label || 'Feed', url, approved: req.body.approved === true, targetDatabase: req.body.targetDatabase || 'cloudflare' });
+  if (id) inMemoryStreamSources = inMemoryStreamSources.map(s => s.id === id ? { ...s, label: label || 'Feed', url } : s);
+  else inMemoryStreamSources.push({ id: `src_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, label: label || 'Feed', url });
   sourceSyncCache.updatedAt = 0;
   pushJsonToGitHub({ category_visibility: inMemoryCategoryVisibility, sub_categories: inMemorySubCategories, matches: inMemoryMatchesCache, deleted_matches: inMemoryDeletedMatches, stream_sources: inMemoryStreamSources }).catch(e => console.error('Persist sources:', e.message));
   res.json({ success: true, sources: inMemoryStreamSources });
