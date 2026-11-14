@@ -60,84 +60,175 @@ async function pushJsonToGitHub(payload) {
 }
 
 function parseAttributeList(line) {
-  const out = {}; const re = /([\w-]+)=(?:"([^"]*)"|([^,]*))/g; let m;
+  const out = {};
+  const re = /([\w-]+)=(?:"([^"]*)"|([^,]*))/g;
+  let m;
   while ((m = re.exec(line))) out[m[1].toLowerCase()] = (m[2] ?? m[3] ?? '').trim();
   return out;
 }
-function getPlayerType(url) {
-  const u = String(url || '').toLowerCase();
-  return /\.mpd(?:$|[?#])/.test(u) ? 'dash' : (/\.m3u8?(?:$|[?#])/.test(u) ? 'hls' : 'iframe');
-}
 function parseM3U(text, source) {
   const lines = String(text || '').replace(/^\uFEFF/, '').split(/\r?\n/);
-  const channels = []; let pending = null, headers = {}, options = {}, currentGroup = 'Live TV';
-  for (const raw of lines) {
-    const line = raw.trim(); if (!line) continue;
+  const channels = [];
+  let pending = null;
+  let pendingHeaders = {};
+  let pendingOptions = {};
+  let currentGroup = '';
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) continue;
     if (line.startsWith('#EXTINF:')) {
-      const comma = line.indexOf(','); const meta = comma >= 0 ? line.slice(0, comma) : line;
+      const comma = line.indexOf(',');
+      const meta = comma >= 0 ? line.slice(0, comma) : line;
       const display = comma >= 0 ? line.slice(comma + 1).trim() : '';
-      const attrs = parseAttributeList(meta); currentGroup = attrs['group-title'] || currentGroup;
-      pending = { attrs, displayName: display || attrs['tvg-name'] || attrs['tvg-id'] || 'Live Channel' }; headers = {}; options = {}; continue;
+      const attrs = parseAttributeList(meta);
+      currentGroup = attrs['group-title'] || currentGroup || 'Live TV';
+      pending = { attrs, displayName: display || attrs['tvg-name'] || attrs['tvg-id'] || 'Live Channel' };
+      pendingHeaders = {};
+      pendingOptions = {};
+      continue;
     }
-    if (line.startsWith('#EXTVLCOPT:') && pending) { const v=line.slice(11), i=v.indexOf('='); if(i>0) options[v.slice(0,i).trim().toLowerCase()]=v.slice(i+1).trim(); continue; }
-    if (line.startsWith('#EXTHTTP:') && pending) { try { Object.assign(headers, JSON.parse(line.slice(9))); } catch (_) {} continue; }
+    if (line.startsWith('#EXTVLCOPT:') && pending) {
+      const value = line.slice('#EXTVLCOPT:'.length);
+      const ix = value.indexOf('=');
+      if (ix > 0) pendingOptions[value.slice(0, ix).trim().toLowerCase()] = value.slice(ix + 1).trim();
+      continue;
+    }
+    if (line.startsWith('#EXTHTTP:') && pending) {
+      try { Object.assign(pendingHeaders, JSON.parse(line.slice('#EXTHTTP:'.length))); } catch (_) {}
+      continue;
+    }
     if (line.startsWith('#')) continue;
     if (/^https?:\/\//i.test(line) && pending) {
-      const a=pending.attrs, name=a['tvg-name'] || pending.displayName, id=a['tvg-id'] || name;
-      const h={...headers}; if(options['http-user-agent'])h['User-Agent']=options['http-user-agent']; if(options['http-referrer'])h.Referer=options['http-referrer']; if(options['http-cookie'])h.Cookie=options['http-cookie'];
-      const stable=`${source.id}:${id}`;
-      channels.push({ id:stable, fb_key:`m3u_${Buffer.from(stable).toString('base64url').slice(0,48)}`, sourceId:source.id, sourceLabel:source.label||'Feed', isChannelCard:true,
-        channelId:id, channelName:name, groupTitle:a['group-title']||currentGroup, logo:a['tvg-logo']||'', card:a['tvg-logo']||'', title:name,
-        servers:[{id:`${stable}:server`,name,url:line,headers:h,isBrowser:getPlayerType(line)==='iframe',playerType:getPlayerType(line),visible:true,pos:1,channelLogo:a['tvg-logo']||''}] });
-      pending=null;
+      const a = pending.attrs;
+      const channelName = a['tvg-name'] || pending.displayName;
+      const channelId = a['tvg-id'] || channelName;
+      const logo = a['tvg-logo'] || '';
+      const serverName = `${channelName}${a['group-title'] ? ` · ${a['group-title']}` : ''}`;
+      const headers = { ...pendingHeaders };
+      if (pendingOptions['http-user-agent']) headers['User-Agent'] = pendingOptions['http-user-agent'];
+      if (pendingOptions['http-referrer']) headers['Referer'] = pendingOptions['http-referrer'];
+      if (pendingOptions['http-cookie']) headers['Cookie'] = pendingOptions['http-cookie'];
+      let url = line;
+      const playerType = /\.mpd(?:$|\?)/i.test(url) ? 'dash' : (/\.m3u8?(?:$|\?)/i.test(url) ? 'hls' : 'iframe');
+      const stable = `${source.id}:${channelId}`;
+      channels.push({
+        id: stable, fb_key: `m3u_${Buffer.from(stable).toString('base64url').slice(0, 48)}`,
+        sourceId: source.id, sourceLabel: source.label || 'Feed', isChannelCard: true,
+        channelId, channelName, groupTitle: a['group-title'] || currentGroup,
+        logo, card: logo, category: 'Others', sub_category: a['group-title'] || currentGroup,
+        title: channelName, team_1: channelName, team_2: '', status: 'live', time: '', timezone: 'Asia/Kolkata',
+        servers: [{ id: `${stable}:server`, name: serverName, url, headers, isBrowser: playerType === 'iframe', playerType, sourceManaged: true, visible: true, pos: 1 }]
+      });
+      pending = null;
     }
   }
   return channels;
 }
-function normalizeName(v) { return String(v||'').toLowerCase().replace(/\b(browserplay|hd|sd)\b/g,'').replace(/[^a-z0-9]+/g,' ').trim(); }
-function makeMatchRecord(m, source, i) {
-  const t1=m.team_1||m.t1||m.team1?.name||'', t2=m.team_2||m.t2||m.team2?.name||'';
-  const title=m.event_name||m.title||m.name||`${t1} vs ${t2}`;
-  const map={...(m.CnpTV||{}),...(m.stream_url_alpha||{}),...(m.stream_url_bravo||{})};
-  if(Array.isArray(m.streams)) m.streams.forEach((x,j)=>{ if(typeof x==='string')map[`Server ${j+1}`]=x; else if(x?.url)map[x.name||`Server ${j+1}`]=x.url; });
-  if(m.raw_url) map[m.name||'Main Server']=m.raw_url;
-  const drm=m.drm_key||m.drmKey||'';
-  const servers=Object.entries(map).filter(([,v])=>typeof v==='string'&&/^https?:\/\//i.test(v)).map(([name,url],n)=>({name,url:url+(drm&&!url.includes('drmLicense=')?`|drmLicense=${drm}`:''),drmKey:drm,playerType:getPlayerType(url),isBrowser:getPlayerType(url)==='iframe',visible:true,pos:n+1}));
-  const rawStatus=String(m.status||m.match_status||'live').toLowerCase();
-  const status=/finish|ended|\bft\b|complete|result/.test(rawStatus)?'finished':(/upcoming|scheduled|not.?start/.test(rawStatus)?'upcoming':'live');
-  const teamParts=title.split(/\s+-\s+/).pop().split(/\s+vs\s+/i);
-  return {id:String(m.match_id||m.id||`${source.id}_${i}`),sourceId:source.id,title,team_1:t1||teamParts[0]||'Team 1',team_2:t2||teamParts[1]||'Team 2',
-    category:m.category||m.sport||'Cricket',sub_category:m.sub_category||m.series||title,card:m.banner||m.card||m.image||m.cover_image||'',
-    team_1_logo:m.team_1_logo||m.t1_img||m.team1?.logo||'',team_2_logo:m.team_2_logo||m.t2_img||m.team2?.logo||'',status,
-    time:m.time||m.match_time||m.date_time||m.date||m.start_time||'',timezone:m.timezone||m.tz||'Asia/Kolkata',servers};
+
+function normaliseChannelEntry(item, source, index) {
+  const name = String(item.name || item.channel_name || item.tvg_name || item.title || item.tvgName || `Channel ${index + 1}`).trim();
+  const channelId = String(item.id || item.channel_id || item.tvg_id || item.tvgId || name).trim();
+  const url = String(item.raw_url || item.url || item.stream_url || item.stream || item.play_url || '').trim();
+  if (!/^https?:\/\//i.test(url)) return null;
+  const logo = String(item.logo || item.tvg_logo || item.tvgLogo || item.icon || item.image || '').trim();
+  const playerType = /\.mpd(?:$|\?)/i.test(url) ? 'dash' : (/\.m3u8?(?:$|\?)/i.test(url) ? 'hls' : 'file');
+  return {
+    id: `${source.id}:${channelId}`, fb_key: `m3u_${Buffer.from(`${source.id}:${channelId}`).toString('base64url').slice(0, 48)}`,
+    sourceId: source.id, sourceLabel: source.label || 'Feed', isChannelCard: true,
+    channelId, channelName: name, groupTitle: String(item.group_title || item.group || item.category || 'Live TV'),
+    logo, card: logo, category: 'Others', sub_category: String(item.group_title || item.group || 'Live TV'),
+    title: name, team_1: name, team_2: '', status: 'live', time: '', timezone: 'Asia/Kolkata',
+    servers: [{ id: `${source.id}:${channelId}:server`, name, channelName: name, logo, url,
+      headers: item.headers && typeof item.headers === 'object' ? item.headers : {},
+      isBrowser: false, playerType, sourceManaged: true, visible: true, pos: 1 }],
+    networkLogo: String(item.network_logo || item.networkLogo || '').trim()
+  };
 }
-async function fetchAndParseSource(source) {
-  const u=new URL(source.url); if(!['http:','https:'].includes(u.protocol))throw new Error('Only HTTP/HTTPS source URLs are allowed');
-  const controller=new AbortController(), timeout=setTimeout(()=>controller.abort(),20000);
-  try {
-    const response=await fetch(u,{headers:{'User-Agent':'Mozilla/5.0 (compatible; LiveSourceSync/1.0)','Accept':'*/*'},signal:controller.signal});
-    if(!response.ok)throw new Error(`HTTP ${response.status}`);
-    const body=await response.text(); if(body.length>12*1024*1024)throw new Error('Source exceeds 12MB limit');
-    if(body.trimStart().startsWith('#EXTM3U')||body.includes('#EXTINF:'))return {type:'channels',matches:parseM3U(body,source)};
-    let json; try{json=JSON.parse(body)}catch(_){throw new Error('Unsupported source: expected M3U or JSON')}
-    // Sony-style JSON channel directory: channels[{id,name,raw_url,proxied_url}]
-    if(Array.isArray(json.channels)) {
-      let logoMap={};
-      if(json.source && /^https?:\/\//i.test(json.source)) {
-        try { const lr=await fetch(json.source,{headers:{'User-Agent':'Mozilla/5.0','Accept':'*/*'},signal:controller.signal}); if(lr.ok){const txt=await lr.text(); parseM3U(txt,source).forEach(c=>{logoMap[normalizeName(c.channelId)]=c.logo;logoMap[normalizeName(c.channelName)]=c.logo;});} } catch(_){}
-      }
-      const channels=json.channels.map((c,i)=>{const name=c.name||c.title||`Channel ${i+1}`, id=String(c.id||c.tvg_id||name), raw=c.raw_url||c.url||c.stream_url||c.proxied_url||c.backup_proxied_url||'';
-        const urls=[c.raw_url,c.proxied_url,c.backup_proxied_url,c.url,c.stream_url].filter((v,j,a)=>typeof v==='string'&&/^https?:\/\//i.test(v)&&a.indexOf(v)===j);
-        const logo=c.logo||c.tvg_logo||logoMap[normalizeName(id)]||logoMap[normalizeName(name)]||'';
-        return {id:`${source.id}:${id}`,fb_key:`jsonch_${Buffer.from(`${source.id}:${id}`).toString('base64url').slice(0,42)}`,sourceId:source.id,sourceLabel:source.label||'Feed',isChannelCard:true,channelId:id,channelName:name,groupTitle:c.group||c.category||source.label||'Live TV',logo,card:logo,title:name,servers:urls.map((url,j)=>({name:j===0?'Main Server':j===1?'Backup Server':`Server ${j+1}`,url,playerType:getPlayerType(url),isBrowser:getPlayerType(url)==='iframe',visible:true,pos:j+1,channelLogo:logo}))};
-      }).filter(c=>c.servers.length);
-      return {type:'channels',matches:channels};
+
+function extractTeams(match, title) {
+  let t1 = String(match.team_1 || match.team1 || match.t1 || match.home_team || match.homeTeam || '').trim();
+  let t2 = String(match.team_2 || match.team2 || match.t2 || match.away_team || match.awayTeam || '').trim();
+  const text = String(title || match.event_name || match.title || match.synopsis || '');
+  if ((!t1 || !t2) && /\s+vs\.?\s+/i.test(text)) {
+    const parts = text.split(/\s+vs\.?\s+/i);
+    if (parts.length >= 2) {
+      const left = parts[0].split(/\s+-\s+/).pop().trim();
+      const right = parts.slice(1).join(' vs ').split(/\s+-\s+/)[0].split(/\s+[|,(]/)[0].trim();
+      if (!t1) t1 = left;
+      if (!t2) t2 = right;
     }
-    const rawList=Array.isArray(json)?json:(json.Matches||json.matches||json.data||json.events||[]);
-    if(!Array.isArray(rawList))throw new Error('JSON feed has no matches[] or channels[] array');
-    const matches=rawList.map((m,i)=>makeMatchRecord(m,source,i)).filter(m=>m.servers.length);
-    return {type:'matches',matches};
-  } finally {clearTimeout(timeout)}
+  }
+  return { t1, t2 };
+}
+
+async function fetchAndParseSource(source) {
+  const u = new URL(source.url);
+  if (!['http:', 'https:'].includes(u.protocol)) throw new Error('Only HTTP/HTTPS source URLs are allowed');
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20000);
+  try {
+    const response = await fetch(u, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; LiveSourceSync/1.0)', Accept: '*/*' }, signal: controller.signal });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const body = await response.text();
+    if (body.length > 12 * 1024 * 1024) throw new Error('Source exceeds 12MB limit');
+    if (body.trimStart().startsWith('#EXTM3U') || body.includes('#EXTINF:')) return parseM3U(body, source);
+    let json;
+    try { json = JSON.parse(body); } catch (_) { throw new Error('Unsupported source: expected M3U or JSON'); }
+
+    // Common channel-only JSON formats (e.g. { channels: [{name, logo, raw_url}] }).
+    const channelList = Array.isArray(json) ? json : (json.channels || json.Channels || json.channel_list || json.items || []);
+    if (Array.isArray(channelList) && channelList.length && channelList.some(x => x && (x.raw_url || x.channel_name || x.tvg_id || x.channel_id))) {
+      const parsedChannels = channelList.map((x, i) => normaliseChannelEntry(x, source, i)).filter(Boolean);
+      // Some channel JSON indexes point back to an M3U source that contains tvg-logo metadata.
+      if (parsedChannels.some(x => !x.logo) && typeof json.source === 'string' && /^https?:\/\//i.test(json.source)) {
+        try {
+          const logoRes = await fetch(json.source, { headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'text/plain,*/*' }, signal: controller.signal });
+          if (logoRes.ok) {
+            const logoText = await logoRes.text();
+            if (logoText.length <= 12 * 1024 * 1024 && (logoText.includes('#EXTINF:') || logoText.trimStart().startsWith('#EXTM3U'))) {
+              const logoEntries = parseM3U(logoText, source);
+              const logoById = new Map(logoEntries.map(x => [String(x.channelId), x]));
+              const logoByName = new Map(logoEntries.map(x => [String(x.channelName).toLowerCase(), x]));
+              parsedChannels.forEach(ch => {
+                ch.networkLogo = String(json.network_logo || json.networkLogo || json.logo || '').trim();
+                const found = logoById.get(String(ch.channelId)) || logoByName.get(String(ch.channelName).toLowerCase());
+                if (found) { ch.logo = found.logo || ch.logo; ch.card = ch.logo; if (found.servers?.[0]?.headers) ch.servers[0].headers = found.servers[0].headers; }
+              });
+            }
+          }
+        } catch (_) { /* channel JSON remains usable without optional artwork enrichment */ }
+      }
+      return parsedChannels;
+    }
+
+    const list = Array.isArray(json) ? json : (json.Matches || json.matches || json.data || json.events || json.results || []);
+    if (!Array.isArray(list)) throw new Error('JSON source has no supported matches/channels array');
+    return list.map((m, i) => {
+      const title = String(m.event_name || m.title || m.synopsis || m.name || '').trim();
+      const { t1, t2 } = extractTeams(m, title);
+      const serverMap = [m.CnpTV, m.stream_url_alpha, m.stream_url_bravo, m.streams].find(x => x && (Array.isArray(x) ? x.length > 0 : Object.keys(x).length > 0)) || {};
+      const serverEntries = Array.isArray(serverMap)
+        ? serverMap.map((v, n) => [v.name || `Server ${n + 1}`, v.url || v.raw_url || v])
+        : Object.entries(serverMap || {});
+      const servers = serverEntries.filter(([, v]) => typeof v === 'string' && /^https?:\/\//i.test(v)).map(([k, v], n) => ({
+        name: `${title || t1 || 'Live'} (${k})`, url: v,
+        isBrowser: false, playerType: /\.mpd(?:$|\?)/i.test(v) ? 'dash' : (/\.m3u8?(?:$|\?)/i.test(v) ? 'hls' : 'file'), sourceManaged: true, visible: true, pos: n + 1
+      }));
+      const hasMatchDetails = !!(t1 && t2 && title);
+      if (!hasMatchDetails && servers.length) {
+        return normaliseChannelEntry({ name: title || m.name || `Channel ${i + 1}`, id: m.id || m.match_id || i,
+          logo: m.logo || m.image || m.banner || m.card || '', raw_url: servers[0].url }, source, i);
+      }
+      return { id: String(m.match_id || m.id || `${source.id}_${i}`), sourceId: source.id,
+        sourceMatchId: String(m.match_id || m.id || `${source.id}_${i}`), title: title || `${t1} vs ${t2}`,
+        team_1: t1, team_2: t2, team_1_logo: m.team_1_logo || m.t1_logo || m.home_team_logo || m.team1_logo || '', team_2_logo: m.team_2_logo || m.t2_logo || m.away_team_logo || m.team2_logo || '', category: m.category || m.sport || m.game || 'Cricket',
+        sub_category: m.sub_category || m.series || title || `${t1} vs ${t2}`,
+        card: m.banner || m.card || m.image || m.cover_image || '',
+        status: /finish|ended|\bft\b|complete/i.test(String(m.status || m.match_status || 'live')) ? 'finished' : 'live',
+        time: m.time || m.match_time || m.date_time || m.date || m.start_time || '',
+        timezone: m.timezone || m.tz || 'Asia/Kolkata', servers };
+    }).filter(m => m.servers && m.servers.length);
+  } finally { clearTimeout(timeout); }
 }
 
 async function syncAllSources() {
@@ -147,9 +238,9 @@ async function syncAllSources() {
   try {
     const results = await Promise.all(inMemoryStreamSources.map(async source => {
       try { return await fetchAndParseSource(source); }
-      catch (e) { errors.push({ id: source.id, label: source.label, error: e.message }); return { type: 'error', matches: [] }; }
+      catch (e) { errors.push({ id: source.id, label: source.label, error: e.message }); return []; }
     }));
-    results.forEach(result => channels.push(...(result.matches || [])));
+    results.forEach(items => channels.push(...items));
     sourceSyncCache = { updatedAt: Date.now(), channels, errors };
     return sourceSyncCache;
   } finally { sourceSyncRunning = false; }
@@ -202,9 +293,9 @@ app.get('/api/parse-source', async (req, res) => {
   if (!req.query.url) return res.status(400).json({ success: false, error: 'Missing url' });
   try {
     const source = { id: 'manual_parse', label: 'Manual Source', url: String(req.query.url) };
-    const parsed = await fetchAndParseSource(source);
+    const matches = await fetchAndParseSource(source);
     res.setHeader('Cache-Control', 'no-store');
-    res.json({ success: true, type: parsed.type, count: parsed.matches.length, matches: parsed.matches });
+    res.json({ success: true, count: matches.length, matches });
   } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 app.get('/api/sync-stream-sources', async (_req, res) => {
