@@ -20,6 +20,8 @@ let inMemoryStreamSources = [];
 let serverDataVersion = Date.now().toString();
 let sourceSyncCache = { updatedAt: 0, channels: [], errors: [] };
 let sourceSyncRunning = false;
+let githubLoaded = false;
+let githubWriteQueue = Promise.resolve();
 
 app.get('/ping', (_req, res) => res.status(200).send('SERVER_ACTIVE_OK'));
 
@@ -34,8 +36,13 @@ async function fetchRawJsonFromGitHub() {
   const fileData = await ghRes.json();
   const decodedContent = Buffer.from(String(fileData.content || '').replace(/\s/g, ''), 'base64').toString('utf8');
   const parsedData = JSON.parse(decodedContent);
-  if (Array.isArray(parsedData.matches)) inMemoryMatchesCache = parsedData.matches;
-  if (Array.isArray(parsedData.deleted_matches)) inMemoryDeletedMatches = parsedData.deleted_matches;
+  // Keep the Render/Cloudflare database physically separate from GitHub's own match list.
+  // Older builds wrote both databases to `matches`, causing one database to overwrite the other.
+  if (Array.isArray(parsedData.cloudflare_matches)) inMemoryMatchesCache = parsedData.cloudflare_matches;
+  else if (!githubLoaded) inMemoryMatchesCache = [];
+  if (Array.isArray(parsedData.cloudflare_deleted_matches)) inMemoryDeletedMatches = parsedData.cloudflare_deleted_matches;
+  else if (!githubLoaded) inMemoryDeletedMatches = [];
+  githubLoaded = true;
   if (parsedData.category_visibility) inMemoryCategoryVisibility = parsedData.category_visibility;
   if (parsedData.sub_categories) inMemorySubCategories = parsedData.sub_categories;
   if (Array.isArray(parsedData.stream_sources)) inMemoryStreamSources = parsedData.stream_sources;
@@ -44,19 +51,25 @@ async function fetchRawJsonFromGitHub() {
 
 async function pushJsonToGitHub(payload) {
   if (!GITHUB_CONFIG.token) return false;
-  const fileUrl = `https://api.github.com/repos/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/contents/${GITHUB_CONFIG.path}`;
-  let sha;
-  const getRes = await fetch(`${fileUrl}?_t=${Date.now()}`, { headers: {
-    Authorization: `Bearer ${GITHUB_CONFIG.token}`, Accept: 'application/vnd.github+json',
-    'User-Agent': 'Render-Backend-LiveSync'
-  }});
-  if (getRes.ok) sha = (await getRes.json()).sha;
-  const content = Buffer.from(JSON.stringify(payload, null, 2)).toString('base64');
-  const putRes = await fetch(fileUrl, { method: 'PUT', headers: {
-    Authorization: `Bearer ${GITHUB_CONFIG.token}`, Accept: 'application/vnd.github+json',
-    'Content-Type': 'application/json', 'User-Agent': 'Render-Backend-LiveSync'
-  }, body: JSON.stringify({ message: `Render Auto-Sync: ${Date.now()}`, content, sha, branch: GITHUB_CONFIG.branch }) });
-  return putRes.ok;
+  const write = async () => {
+    const fileUrl = `https://api.github.com/repos/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/contents/${GITHUB_CONFIG.path}`;
+    const headers = { Authorization: `Bearer ${GITHUB_CONFIG.token}`, Accept: 'application/vnd.github+json', 'User-Agent': 'Render-Backend-LiveSync' };
+    const getRes = await fetch(`${fileUrl}?_t=${Date.now()}`, { headers });
+    if (!getRes.ok) throw new Error(`GitHub read before write failed: ${getRes.status}`);
+    const file = await getRes.json();
+    const existing = JSON.parse(Buffer.from(String(file.content || '').replace(/\s/g, ''), 'base64').toString('utf8') || '{}');
+    // Merge only supplied keys; preserve GitHub matches and Cloudflare matches independently.
+    const merged = { ...existing, ...payload };
+    const content = Buffer.from(JSON.stringify(merged, null, 2)).toString('base64');
+    const putRes = await fetch(fileUrl, { method: 'PUT', headers: { ...headers, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: `Render Auto-Sync: ${Date.now()}`, content, sha: file.sha, branch: GITHUB_CONFIG.branch }) });
+    if (!putRes.ok) throw new Error(`GitHub write failed: ${putRes.status} ${putRes.statusText}`);
+    return true;
+  };
+  // Serialize writes so simultaneous saves cannot race on the GitHub SHA and erase newer data.
+  const task = githubWriteQueue.then(write, write);
+  githubWriteQueue = task.catch(() => {});
+  return task;
 }
 
 function parseAttributeList(line) {
@@ -250,12 +263,12 @@ async function syncAllSources() {
 
 app.get('/api/raw-matches', async (_req, res) => {
   res.setHeader('Cache-Control', 'no-store');
-  try { if (!inMemoryMatchesCache.length) await fetchRawJsonFromGitHub(); res.json({ success: true, v: serverDataVersion, category_visibility: inMemoryCategoryVisibility, sub_categories: inMemorySubCategories, matches: inMemoryMatchesCache, deleted_matches: inMemoryDeletedMatches }); }
+  try { if (!githubLoaded) await fetchRawJsonFromGitHub(); res.json({ success: true, v: serverDataVersion, category_visibility: inMemoryCategoryVisibility, sub_categories: inMemorySubCategories, matches: inMemoryMatchesCache, deleted_matches: inMemoryDeletedMatches }); }
   catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 app.get('/api/matches', async (_req, res) => {
   res.setHeader('Cache-Control', 'no-store');
-  try { if (!inMemoryMatchesCache.length) await fetchRawJsonFromGitHub(); res.json({ v: serverDataVersion, category_visibility: inMemoryCategoryVisibility, sub_categories: inMemorySubCategories, matches: inMemoryMatchesCache, deleted_matches: inMemoryDeletedMatches }); }
+  try { if (!githubLoaded) await fetchRawJsonFromGitHub(); res.json({ v: serverDataVersion, category_visibility: inMemoryCategoryVisibility, sub_categories: inMemorySubCategories, matches: inMemoryMatchesCache, deleted_matches: inMemoryDeletedMatches }); }
   catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.post('/api/matches', async (req, res) => {
@@ -267,27 +280,28 @@ app.post('/api/matches', async (req, res) => {
     if (body.sub_categories) inMemorySubCategories = body.sub_categories;
     if (body.timerStatePayload) { inMemoryTimerState = { ...inMemoryTimerState, ...body.timerStatePayload }; delete body.timerStatePayload; }
     serverDataVersion = Date.now().toString();
-    pushJsonToGitHub({ category_visibility: inMemoryCategoryVisibility, sub_categories: inMemorySubCategories, matches: inMemoryMatchesCache, deleted_matches: inMemoryDeletedMatches, stream_sources: inMemoryStreamSources }).catch(e => console.error('GitHub push:', e.message));
-    res.json({ success: true, v: serverDataVersion });
+    const stored = await pushJsonToGitHub({ category_visibility: inMemoryCategoryVisibility, sub_categories: inMemorySubCategories, cloudflare_matches: inMemoryMatchesCache, cloudflare_deleted_matches: inMemoryDeletedMatches, stream_sources: inMemoryStreamSources });
+    if (!stored) throw new Error('Cloudflare database persistence failed');
+    res.json({ success: true, v: serverDataVersion, persisted: true });
   } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 app.get('/api/matches/version', (_req, res) => res.json({ v: serverDataVersion }));
 app.get('/api/timer-state', (_req, res) => res.json(inMemoryTimerState));
 app.get('/api/stream-sources', (_req, res) => res.setHeader('Cache-Control', 'no-store').json(inMemoryStreamSources));
-app.post('/api/stream-sources', (req, res) => {
+app.post('/api/stream-sources', async (req, res) => {
   const { id, label, url } = req.body || {};
   if (!url || !/^https?:\/\//i.test(url)) return res.status(400).json({ success: false, error: 'Valid HTTP/HTTPS URL required' });
   if (id) inMemoryStreamSources = inMemoryStreamSources.map(s => s.id === id ? { ...s, label: label || 'Feed', url } : s);
   else inMemoryStreamSources.push({ id: `src_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, label: label || 'Feed', url });
   sourceSyncCache.updatedAt = 0;
-  pushJsonToGitHub({ category_visibility: inMemoryCategoryVisibility, sub_categories: inMemorySubCategories, matches: inMemoryMatchesCache, deleted_matches: inMemoryDeletedMatches, stream_sources: inMemoryStreamSources }).catch(e => console.error('Persist sources:', e.message));
-  res.json({ success: true, sources: inMemoryStreamSources });
+  try { await pushJsonToGitHub({ stream_sources: inMemoryStreamSources }); res.json({ success: true, sources: inMemoryStreamSources, persisted: true }); }
+  catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
-app.post('/api/stream-sources/delete/:id', (req, res) => {
+app.post('/api/stream-sources/delete/:id', async (req, res) => {
   inMemoryStreamSources = inMemoryStreamSources.filter(s => s.id !== req.params.id);
   sourceSyncCache.updatedAt = 0;
-  pushJsonToGitHub({ category_visibility: inMemoryCategoryVisibility, sub_categories: inMemorySubCategories, matches: inMemoryMatchesCache, deleted_matches: inMemoryDeletedMatches, stream_sources: inMemoryStreamSources }).catch(e => console.error('Persist sources:', e.message));
-  res.json({ success: true, sources: inMemoryStreamSources });
+  try { await pushJsonToGitHub({ stream_sources: inMemoryStreamSources }); res.json({ success: true, sources: inMemoryStreamSources, persisted: true }); }
+  catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 app.get('/api/parse-source', async (req, res) => {
   if (!req.query.url) return res.status(400).json({ success: false, error: 'Missing url' });
