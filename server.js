@@ -1,6 +1,5 @@
 const express = require('express');
 const cors = require('cors');
-
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '15mb' }));
@@ -36,8 +35,6 @@ async function fetchRawJsonFromGitHub() {
   const fileData = await ghRes.json();
   const decodedContent = Buffer.from(String(fileData.content || '').replace(/\s/g, ''), 'base64').toString('utf8');
   const parsedData = JSON.parse(decodedContent);
-  // Keep the Render/Cloudflare database physically separate from GitHub's own match list.
-  // Older builds wrote both databases to `matches`, causing one database to overwrite the other.
   if (Array.isArray(parsedData.cloudflare_matches)) inMemoryMatchesCache = parsedData.cloudflare_matches;
   else if (!githubLoaded) inMemoryMatchesCache = [];
   if (Array.isArray(parsedData.cloudflare_deleted_matches)) inMemoryDeletedMatches = parsedData.cloudflare_deleted_matches;
@@ -58,7 +55,6 @@ async function pushJsonToGitHub(payload) {
     if (!getRes.ok) throw new Error(`GitHub read before write failed: ${getRes.status}`);
     const file = await getRes.json();
     const existing = JSON.parse(Buffer.from(String(file.content || '').replace(/\s/g, ''), 'base64').toString('utf8') || '{}');
-    // Merge only supplied keys; preserve GitHub matches and Cloudflare matches independently.
     const merged = { ...existing, ...payload };
     const content = Buffer.from(JSON.stringify(merged, null, 2)).toString('base64');
     const putRes = await fetch(fileUrl, { method: 'PUT', headers: { ...headers, 'Content-Type': 'application/json' },
@@ -66,7 +62,6 @@ async function pushJsonToGitHub(payload) {
     if (!putRes.ok) throw new Error(`GitHub write failed: ${putRes.status} ${putRes.statusText}`);
     return true;
   };
-  // Serialize writes so simultaneous saves cannot race on the GitHub SHA and erase newer data.
   const task = githubWriteQueue.then(write, write);
   githubWriteQueue = task.catch(() => {});
   return task;
@@ -79,6 +74,7 @@ function parseAttributeList(line) {
   while ((m = re.exec(line))) out[m[1].toLowerCase()] = (m[2] ?? m[3] ?? '').trim();
   return out;
 }
+
 function parseM3U(text, source) {
   const lines = String(text || '').replace(/^\uFEFF/, '').split(/\r?\n/);
   const channels = [];
@@ -138,10 +134,8 @@ function parseM3U(text, source) {
   return channels;
 }
 
-
 function cleanSourceUrl(value) {
   let url = String(value ?? '').trim();
-  // Accept URLs pasted as Markdown links as well as plain JSON strings.
   const markdown = url.match(/^\[[^\]]*\]\((https?:\/\/[^\s)]+)\)$/i);
   if (markdown) url = markdown[1];
   return url.replace(/^&lt;/i, '<').replace(/&gt;$/i, '>').replace(/^<|>$/g, '').trim();
@@ -150,8 +144,18 @@ function cleanSourceUrl(value) {
 function normaliseChannelEntry(item, source, index) {
   const name = String(item.name || item.channel_name || item.tvg_name || item.title || item.tvgName || `Channel ${index + 1}`).trim();
   const channelId = String(item.id || item.channel_id || item.tvg_id || item.tvgId || name).trim();
-  const url = cleanSourceUrl(item.raw_url || item.url || item.stream_url || item.stream || item.play_url || '');
+  
+  // Proxied URL is prioritized first
+  let url = cleanSourceUrl(item.proxied_url || item.raw_url || item.url || item.stream_url || item.stream || item.play_url || '');
   if (!/^https?:\/\//i.test(url)) return null;
+
+  const drmKey = item.drm_key || item.drm || item.license_url || item.licenseUrl || item.drm_license || item.drmLicense || '';
+  const drmScheme = item.drm_scheme || item.drmScheme || 'clearkey';
+  if (drmKey && !url.includes('|')) {
+    const formattedDrm = drmKey.includes('drmScheme=') ? drmKey : `|drmScheme=${drmScheme}&drmLicense=${drmKey}`;
+    url = url + formattedDrm;
+  }
+
   const logo = String(item.logo || item.tvg_logo || item.tvgLogo || item.icon || item.image || '').trim();
   const playerType = /\.mpd(?:$|\?)/i.test(url) ? 'dash' : (/\.m3u8?(?:$|\?)/i.test(url) ? 'hls' : 'file');
   return {
@@ -197,11 +201,9 @@ async function fetchAndParseSource(source) {
     let json;
     try { json = JSON.parse(body); } catch (_) { throw new Error('Unsupported source: expected M3U or JSON'); }
 
-    // Common channel-only JSON formats (e.g. { channels: [{name, logo, raw_url}] }).
     const channelList = Array.isArray(json) ? json : (json.channels || json.Channels || json.channel_list || json.items || []);
-    if (Array.isArray(channelList) && channelList.length && channelList.some(x => x && (x.raw_url || x.channel_name || x.tvg_id || x.channel_id))) {
+    if (Array.isArray(channelList) && channelList.length && channelList.some(x => x && (x.proxied_url || x.raw_url || x.url || x.channel_name || x.tvg_id || x.channel_id))) {
       const parsedChannels = channelList.map((x, i) => normaliseChannelEntry(x, source, i)).filter(Boolean);
-      // Some channel JSON indexes point back to an M3U source that contains tvg-logo metadata.
       if (parsedChannels.some(x => !x.logo) && typeof json.source === 'string' && /^https?:\/\//i.test(json.source)) {
         try {
           const logoRes = await fetch(json.source, { headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'text/plain,*/*' }, signal: controller.signal });
@@ -218,7 +220,7 @@ async function fetchAndParseSource(source) {
               });
             }
           }
-        } catch (_) { /* channel JSON remains usable without optional artwork enrichment */ }
+        } catch (_) {}
       }
       return parsedChannels;
     }
@@ -228,8 +230,6 @@ async function fetchAndParseSource(source) {
     return list.map((m, i) => {
       const title = String(m.event_name || m.title || m.synopsis || m.name || '').trim();
       const { t1, t2 } = extractTeams(m, title);
-      // Merge every provider group; the old code selected only the first non-empty
-      // object and silently discarded the remaining CDN/server alternatives.
       const serverGroups = [
         ['CnpTV', m.CnpTV], ['Alpha', m.stream_url_alpha],
         ['Bravo', m.stream_url_bravo], ['Streams', m.streams]
@@ -242,8 +242,17 @@ async function fetchAndParseSource(source) {
           : (typeof group === 'object' ? Object.entries(group) : []);
         for (const [key, value] of entries) {
           const entry = typeof value === 'string' ? { url: value } : (value && typeof value === 'object' ? value : {});
-          const streamUrl = cleanSourceUrl(entry.url || entry.raw_url || entry.stream_url || entry.play_url || entry.src || (typeof value === 'string' ? value : ''));
+          let streamUrl = cleanSourceUrl(entry.proxied_url || entry.raw_url || entry.url || entry.stream_url || entry.play_url || entry.src || (typeof value === 'string' ? value : ''));
           if (!/^https?:\/\//i.test(streamUrl)) continue;
+
+          const drmKey = entry.drm_key || entry.drm || entry.license_url || entry.licenseUrl || entry.drm_license || entry.drmLicense || m.drm_key || m.drm || m.license_url || m.licenseUrl || m.drm_license || m.drmLicense || '';
+          const drmScheme = entry.drm_scheme || entry.drmScheme || m.drm_scheme || m.drmScheme || 'clearkey';
+
+          if (drmKey && !streamUrl.includes('|')) {
+            const formattedDrm = drmKey.includes('drmScheme=') ? drmKey : `|drmScheme=${drmScheme}&drmLicense=${drmKey}`;
+            streamUrl = streamUrl + formattedDrm;
+          }
+
           serverEntries.push({
             name: String(entry.name || `${groupName} ${key}`).trim(),
             url: streamUrl,
@@ -264,8 +273,6 @@ async function fetchAndParseSource(source) {
         drmProtected: !!m.drm_key || !!m.drm || !!m.license_url || !!m.licenseUrl,
         drmSystem: m.drm_system || m.drmSystem || '',
         drmScheme: m.drm_scheme || m.drmScheme || m.drm_scheme_type || '',
-        // Only accept an official license endpoint. A content decryption key is
-        // not a license URL and is deliberately never appended to the stream URL.
         licenseUrl: m.license_url || m.licenseUrl || m.widevine_license_url || m.widevineLicenseUrl || ''
       }));
       const hasMatchDetails = !!(t1 && t2 && title);
@@ -313,11 +320,13 @@ app.get('/api/raw-matches', async (_req, res) => {
   try { if (!githubLoaded) await fetchRawJsonFromGitHub(); res.json({ success: true, v: serverDataVersion, category_visibility: inMemoryCategoryVisibility, sub_categories: inMemorySubCategories, matches: inMemoryMatchesCache, deleted_matches: inMemoryDeletedMatches }); }
   catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
+
 app.get('/api/matches', async (_req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   try { if (!githubLoaded) await fetchRawJsonFromGitHub(); res.json({ v: serverDataVersion, category_visibility: inMemoryCategoryVisibility, sub_categories: inMemorySubCategories, matches: inMemoryMatchesCache, deleted_matches: inMemoryDeletedMatches }); }
   catch (e) { res.status(500).json({ error: e.message }); }
 });
+
 app.post('/api/matches', async (req, res) => {
   try {
     const body = req.body || {};
@@ -332,9 +341,11 @@ app.post('/api/matches', async (req, res) => {
     res.json({ success: true, v: serverDataVersion, persisted: true });
   } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
+
 app.get('/api/matches/version', (_req, res) => res.json({ v: serverDataVersion }));
 app.get('/api/timer-state', (_req, res) => res.json(inMemoryTimerState));
 app.get('/api/stream-sources', (_req, res) => res.setHeader('Cache-Control', 'no-store').json(inMemoryStreamSources));
+
 app.post('/api/stream-sources', async (req, res) => {
   const { id, label, url } = req.body || {};
   if (!url || !/^https?:\/\//i.test(url)) return res.status(400).json({ success: false, error: 'Valid HTTP/HTTPS URL required' });
@@ -344,12 +355,14 @@ app.post('/api/stream-sources', async (req, res) => {
   try { await pushJsonToGitHub({ stream_sources: inMemoryStreamSources }); res.json({ success: true, sources: inMemoryStreamSources, persisted: true }); }
   catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
+
 app.post('/api/stream-sources/delete/:id', async (req, res) => {
   inMemoryStreamSources = inMemoryStreamSources.filter(s => s.id !== req.params.id);
   sourceSyncCache.updatedAt = 0;
   try { await pushJsonToGitHub({ stream_sources: inMemoryStreamSources }); res.json({ success: true, sources: inMemoryStreamSources, persisted: true }); }
   catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
+
 app.get('/api/parse-source', async (req, res) => {
   if (!req.query.url) return res.status(400).json({ success: false, error: 'Missing url' });
   try {
@@ -359,12 +372,12 @@ app.get('/api/parse-source', async (req, res) => {
     res.json({ success: true, count: matches.length, matches });
   } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
+
 app.get('/api/sync-stream-sources', async (_req, res) => {
   try { const data = await syncAllSources(); res.setHeader('Cache-Control', 'no-store'); res.json({ success: true, ...data }); }
   catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
-// Keep server-side source cache warm every 60 seconds; frontend applies changes to Cloudflare match storage.
 setInterval(() => { if (inMemoryStreamSources.length) syncAllSources().catch(e => console.error('Source sync:', e.message)); }, 60000);
 
 app.get('/api/fetch-score', async (req, res) => {
