@@ -68,11 +68,34 @@ async function fetchRawJsonFromGitHub() {
     throw new Error('GitHub matches.json must contain a JSON object');
   }
 
-  // Keep Render/Cloudflare match data separate from the source's own `matches` list.
-  if (Array.isArray(parsedData.cloudflare_matches)) inMemoryMatchesCache = parsedData.cloudflare_matches;
-  else if (!githubLoaded) inMemoryMatchesCache = [];
-  if (Array.isArray(parsedData.cloudflare_deleted_matches)) inMemoryDeletedMatches = parsedData.cloudflare_deleted_matches;
-  else if (!githubLoaded) inMemoryDeletedMatches = [];
+  // Load the repository `matches` list as well as Render/Cloudflare additions.
+  // Previously only `cloudflare_matches` was read, so a valid matches.json
+  // containing `matches: [...]` incorrectly appeared empty in the API.
+  const repositoryMatches = Array.isArray(parsedData.matches) ? parsedData.matches : [];
+  const cloudflareMatches = Array.isArray(parsedData.cloudflare_matches) ? parsedData.cloudflare_matches : [];
+  const mergedMatches = new Map();
+  for (const match of repositoryMatches) {
+    if (!match || typeof match !== 'object') continue;
+    const key = String(match.id || match.fb_key || match.sourceMatchId || JSON.stringify(match));
+    mergedMatches.set(key, match);
+  }
+  // Cloudflare additions override repository entries with the same identifier.
+  for (const match of cloudflareMatches) {
+    if (!match || typeof match !== 'object') continue;
+    const key = String(match.id || match.fb_key || match.sourceMatchId || JSON.stringify(match));
+    mergedMatches.set(key, match);
+  }
+  inMemoryMatchesCache = Array.from(mergedMatches.values());
+
+  const repositoryDeleted = Array.isArray(parsedData.deleted_matches) ? parsedData.deleted_matches : [];
+  const cloudflareDeleted = Array.isArray(parsedData.cloudflare_deleted_matches) ? parsedData.cloudflare_deleted_matches : [];
+  const mergedDeleted = new Map();
+  for (const item of [...repositoryDeleted, ...cloudflareDeleted]) {
+    if (!item || typeof item !== 'object') continue;
+    const key = String(item.id || item.fb_key || item.key || JSON.stringify(item));
+    mergedDeleted.set(key, item);
+  }
+  inMemoryDeletedMatches = Array.from(mergedDeleted.values());
   if (parsedData.category_visibility && typeof parsedData.category_visibility === 'object') inMemoryCategoryVisibility = parsedData.category_visibility;
   if (parsedData.sub_categories && typeof parsedData.sub_categories === 'object') inMemorySubCategories = parsedData.sub_categories;
   if (Array.isArray(parsedData.stream_sources)) inMemoryStreamSources = parsedData.stream_sources;
