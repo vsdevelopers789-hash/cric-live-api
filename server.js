@@ -1,13 +1,10 @@
 const express = require('express');
 const cors = require('cors');
-
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '15mb' }));
 app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 
-// GitHub repository file is in the repository ROOT (not inside a subfolder).
-// Render -> Environment must contain GITHUB_TOKEN with Contents: Read and write access.
 const GITHUB_CONFIG = Object.freeze({
   owner: 'vsdevelopers789-hash',
   repo: 'live-stream-data',
@@ -68,34 +65,10 @@ async function fetchRawJsonFromGitHub() {
     throw new Error('GitHub matches.json must contain a JSON object');
   }
 
-  // Load the repository `matches` list as well as Render/Cloudflare additions.
-  // Previously only `cloudflare_matches` was read, so a valid matches.json
-  // containing `matches: [...]` incorrectly appeared empty in the API.
-  const repositoryMatches = Array.isArray(parsedData.matches) ? parsedData.matches : [];
-  const cloudflareMatches = Array.isArray(parsedData.cloudflare_matches) ? parsedData.cloudflare_matches : [];
-  const mergedMatches = new Map();
-  for (const match of repositoryMatches) {
-    if (!match || typeof match !== 'object') continue;
-    const key = String(match.id || match.fb_key || match.sourceMatchId || JSON.stringify(match));
-    mergedMatches.set(key, match);
-  }
-  // Cloudflare additions override repository entries with the same identifier.
-  for (const match of cloudflareMatches) {
-    if (!match || typeof match !== 'object') continue;
-    const key = String(match.id || match.fb_key || match.sourceMatchId || JSON.stringify(match));
-    mergedMatches.set(key, match);
-  }
-  inMemoryMatchesCache = Array.from(mergedMatches.values());
-
-  const repositoryDeleted = Array.isArray(parsedData.deleted_matches) ? parsedData.deleted_matches : [];
-  const cloudflareDeleted = Array.isArray(parsedData.cloudflare_deleted_matches) ? parsedData.cloudflare_deleted_matches : [];
-  const mergedDeleted = new Map();
-  for (const item of [...repositoryDeleted, ...cloudflareDeleted]) {
-    if (!item || typeof item !== 'object') continue;
-    const key = String(item.id || item.fb_key || item.key || JSON.stringify(item));
-    mergedDeleted.set(key, item);
-  }
-  inMemoryDeletedMatches = Array.from(mergedDeleted.values());
+  if (Array.isArray(parsedData.cloudflare_matches)) inMemoryMatchesCache = parsedData.cloudflare_matches;
+  else if (!githubLoaded) inMemoryMatchesCache = [];
+  if (Array.isArray(parsedData.cloudflare_deleted_matches)) inMemoryDeletedMatches = parsedData.cloudflare_deleted_matches;
+  else if (!githubLoaded) inMemoryDeletedMatches = [];
   if (parsedData.category_visibility && typeof parsedData.category_visibility === 'object') inMemoryCategoryVisibility = parsedData.category_visibility;
   if (parsedData.sub_categories && typeof parsedData.sub_categories === 'object') inMemorySubCategories = parsedData.sub_categories;
   if (Array.isArray(parsedData.stream_sources)) inMemoryStreamSources = parsedData.stream_sources;
@@ -129,7 +102,6 @@ async function pushJsonToGitHub(payload) {
       throw new Error('Cannot update matches.json: root JSON value must be an object');
     }
 
-    // Merge only changed fields; preserve unrelated GitHub data and source match lists.
     const merged = { ...existing, ...payload };
     const content = Buffer.from(JSON.stringify(merged, null, 2), 'utf8').toString('base64');
     const putRes = await fetch(fileUrl, {
@@ -149,7 +121,6 @@ async function pushJsonToGitHub(payload) {
     return true;
   };
 
-  // Queue writes to avoid two Render requests racing with the same GitHub SHA.
   const task = githubWriteQueue.then(write, write);
   githubWriteQueue = task.catch(() => {});
   return task;
@@ -162,6 +133,7 @@ function parseAttributeList(line) {
   while ((m = re.exec(line))) out[m[1].toLowerCase()] = (m[2] ?? m[3] ?? '').trim();
   return out;
 }
+
 function parseM3U(text, source) {
   const lines = String(text || '').replace(/^\uFEFF/, '').split(/\r?\n/);
   const channels = [];
@@ -213,7 +185,8 @@ function parseM3U(text, source) {
         channelId, channelName, groupTitle: a['group-title'] || currentGroup,
         logo, card: logo, category: 'Others', sub_category: a['group-title'] || currentGroup,
         title: channelName, team_1: channelName, team_2: '', status: 'live', time: '', timezone: 'Asia/Kolkata',
-        servers: [{ id: `${stable}:server`, name: serverName, url, headers, isBrowser: playerType === 'iframe', playerType, sourceManaged: true, visible: true, pos: 1 }]
+        drm_key: '',
+        servers: [{ id: `${stable}:server`, name: serverName, url, headers, isBrowser: playerType === 'iframe', playerType, sourceManaged: true, visible: true, pos: 1, drm_key: '' }]
       });
       pending = null;
     }
@@ -224,19 +197,25 @@ function parseM3U(text, source) {
 function normaliseChannelEntry(item, source, index) {
   const name = String(item.name || item.channel_name || item.tvg_name || item.title || item.tvgName || `Channel ${index + 1}`).trim();
   const channelId = String(item.id || item.channel_id || item.tvg_id || item.tvgId || name).trim();
-  const url = String(item.raw_url || item.url || item.stream_url || item.stream || item.play_url || '').trim();
+  
+  // Proxied URL ki మొదటి ప్రయారిటీ ఇచ్చేలా అప్‌డేట్ చేయబడింది
+  const url = String(item.proxied_url || item.backup_proxied_url || item.raw_url || item.url || item.stream_url || item.stream || item.play_url || '').trim();
   if (!/^https?:\/\//i.test(url)) return null;
+  
   const logo = String(item.logo || item.tvg_logo || item.tvgLogo || item.icon || item.image || '').trim();
+  const drmKey = String(item.drm_key || item.drmKey || item.key || '').trim();
   const playerType = /\.mpd(?:$|\?)/i.test(url) ? 'dash' : (/\.m3u8?(?:$|\?)/i.test(url) ? 'hls' : 'file');
+  
   return {
     id: `${source.id}:${channelId}`, fb_key: `m3u_${Buffer.from(`${source.id}:${channelId}`).toString('base64url').slice(0, 48)}`,
     sourceId: source.id, sourceLabel: source.label || 'Feed', isChannelCard: true,
     channelId, channelName: name, groupTitle: String(item.group_title || item.group || item.category || 'Live TV'),
     logo, card: logo, category: 'Others', sub_category: String(item.group_title || item.group || 'Live TV'),
     title: name, team_1: name, team_2: '', status: 'live', time: '', timezone: 'Asia/Kolkata',
+    drm_key: drmKey,
     servers: [{ id: `${source.id}:${channelId}:server`, name, channelName: name, logo, url,
       headers: item.headers && typeof item.headers === 'object' ? item.headers : {},
-      isBrowser: false, playerType, sourceManaged: true, visible: true, pos: 1 }],
+      isBrowser: false, playerType, sourceManaged: true, visible: true, pos: 1, drm_key: drmKey }],
     networkLogo: String(item.network_logo || item.networkLogo || '').trim()
   };
 }
@@ -271,39 +250,20 @@ async function fetchAndParseSource(source) {
     let json;
     try { json = JSON.parse(body); } catch (_) { throw new Error('Unsupported source: expected M3U or JSON'); }
 
-    // Common channel-only JSON formats (e.g. { channels: [{name, logo, raw_url}] }).
     const channelList = Array.isArray(json) ? json : (json.channels || json.Channels || json.channel_list || json.items || []);
-    if (Array.isArray(channelList) && channelList.length && channelList.some(x => x && (x.raw_url || x.channel_name || x.tvg_id || x.channel_id))) {
+    if (Array.isArray(channelList) && channelList.length && channelList.some(x => x && (x.raw_url || x.proxied_url || x.channel_name || x.tvg_id || x.channel_id))) {
       const parsedChannels = channelList.map((x, i) => normaliseChannelEntry(x, source, i)).filter(Boolean);
-      // Some channel JSON indexes point back to an M3U source that contains tvg-logo metadata.
-      if (parsedChannels.some(x => !x.logo) && typeof json.source === 'string' && /^https?:\/\//i.test(json.source)) {
-        try {
-          const logoRes = await fetch(json.source, { headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'text/plain,*/*' }, signal: controller.signal });
-          if (logoRes.ok) {
-            const logoText = await logoRes.text();
-            if (logoText.length <= 12 * 1024 * 1024 && (logoText.includes('#EXTINF:') || logoText.trimStart().startsWith('#EXTM3U'))) {
-              const logoEntries = parseM3U(logoText, source);
-              const logoById = new Map(logoEntries.map(x => [String(x.channelId), x]));
-              const logoByName = new Map(logoEntries.map(x => [String(x.channelName).toLowerCase(), x]));
-              parsedChannels.forEach(ch => {
-                ch.networkLogo = String(json.network_logo || json.networkLogo || json.logo || '').trim();
-                const found = logoById.get(String(ch.channelId)) || logoByName.get(String(ch.channelName).toLowerCase());
-                if (found) { ch.logo = found.logo || ch.logo; ch.card = ch.logo; if (found.servers?.[0]?.headers) ch.servers[0].headers = found.servers[0].headers; }
-              });
-            }
-          }
-        } catch (_) { /* channel JSON remains usable without optional artwork enrichment */ }
-      }
       return parsedChannels;
     }
 
     const list = Array.isArray(json) ? json : (json.Matches || json.matches || json.data || json.events || json.results || []);
     if (!Array.isArray(list)) throw new Error('JSON source has no supported matches/channels array');
+    
     return list.map((m, i) => {
       const title = String(m.event_name || m.title || m.synopsis || m.name || '').trim();
       const { t1, t2 } = extractTeams(m, title);
-      // Merge every provider group; the old code selected only the first non-empty
-      // object and silently discarded the remaining CDN/server alternatives.
+      const matchDrmKey = String(m.drm_key || m.drmKey || m.key || '').trim();
+      
       const serverGroups = [
         ['CnpTV', m.CnpTV], ['Alpha', m.stream_url_alpha],
         ['Bravo', m.stream_url_bravo], ['Streams', m.streams]
@@ -316,7 +276,8 @@ async function fetchAndParseSource(source) {
           : (typeof group === 'object' ? Object.entries(group) : []);
         for (const [key, value] of entries) {
           const entry = typeof value === 'string' ? { url: value } : (value && typeof value === 'object' ? value : {});
-          const streamUrl = String(entry.url || entry.raw_url || entry.stream_url || entry.play_url || entry.src || '').trim();
+          // Proxied URL లేదా raw URL ఫెచ్ చేసుకునేటప్పుడు ప్రయారిటీ ఇవ్వడం
+          const streamUrl = String(entry.proxied_url || entry.backup_proxied_url || entry.raw_url || entry.url || entry.stream_url || entry.play_url || entry.src || '').trim();
           if (!/^https?:\/\//i.test(streamUrl)) continue;
           serverEntries.push({
             name: String(entry.name || `${groupName} ${key}`).trim(),
@@ -335,18 +296,20 @@ async function fetchAndParseSource(source) {
         name: `${title || t1 || 'Live'} (${entry.name})`, url: entry.url,
         headers: entry.headers, isBrowser: false, playerType: entry.playerType,
         sourceManaged: true, visible: true, pos: n + 1,
-        drmProtected: !!m.drm_key || !!m.drm || !!m.license_url || !!m.licenseUrl,
+        drm_key: matchDrmKey,
+        drmProtected: !!matchDrmKey || !!m.drm || !!m.license_url || !!m.licenseUrl,
         drmSystem: m.drm_system || m.drmSystem || '',
-        // Only accept an official license endpoint. A content decryption key is
-        // not a license URL and is deliberately never appended to the stream URL.
         licenseUrl: m.license_url || m.licenseUrl || m.widevine_license_url || m.widevineLicenseUrl || ''
       }));
+
       const hasMatchDetails = !!(t1 && t2 && title);
       if (!hasMatchDetails && servers.length) {
         return normaliseChannelEntry({ name: title || m.name || `Channel ${i + 1}`, id: m.id || m.match_id || i,
-          logo: m.logo || m.image || m.banner || m.card || '', raw_url: servers[0].url }, source, i);
+          logo: m.logo || m.image || m.banner || m.card || '', raw_url: servers[0].url, drm_key: matchDrmKey }, source, i);
       }
-      return { id: String(m.match_id || m.id || `${source.id}_${i}`), sourceId: source.id,
+      
+      return { 
+        id: String(m.match_id || m.id || `${source.id}_${i}`), sourceId: source.id,
         sourceMatchId: String(m.match_id || m.id || `${source.id}_${i}`), title: title || `${t1} vs ${t2}`,
         team_1: t1, team_2: t2, team_1_logo: m.team_1_logo || m.t1_logo || m.home_team_logo || m.team1_logo || '', team_2_logo: m.team_2_logo || m.t2_logo || m.away_team_logo || m.team2_logo || '', category: m.category || m.sport || m.game || 'Cricket',
         sub_category: m.sub_category || m.series || title || `${t1} vs ${t2}`,
@@ -355,10 +318,12 @@ async function fetchAndParseSource(source) {
         status: /finish|ended|\bft\b|complete/i.test(String(m.status || m.match_status || 'live')) ? 'finished' : 'live',
         time: m.time || m.match_time || m.date_time || m.date || m.start_time || '',
         timezone: m.timezone || m.tz || 'Asia/Kolkata',
-        drmProtected: !!m.drm_key || !!m.drm || !!m.license_url || !!m.licenseUrl,
+        drm_key: matchDrmKey,
+        drmProtected: !!matchDrmKey || !!m.drm || !!m.license_url || !!m.licenseUrl,
         drmSystem: m.drm_system || m.drmSystem || '',
         licenseUrl: m.license_url || m.licenseUrl || m.widevine_license_url || m.widevineLicenseUrl || '',
-        servers };
+        servers 
+      };
     }).filter(m => m.servers && m.servers.length);
   } finally { clearTimeout(timeout); }
 }
@@ -385,11 +350,13 @@ app.get('/api/raw-matches', async (_req, res) => {
   try { if (!githubLoaded) await fetchRawJsonFromGitHub(); res.json({ success: true, v: serverDataVersion, category_visibility: inMemoryCategoryVisibility, sub_categories: inMemorySubCategories, matches: inMemoryMatchesCache, deleted_matches: inMemoryDeletedMatches }); }
   catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
+
 app.get('/api/matches', async (_req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   try { if (!githubLoaded) await fetchRawJsonFromGitHub(); res.json({ v: serverDataVersion, category_visibility: inMemoryCategoryVisibility, sub_categories: inMemorySubCategories, matches: inMemoryMatchesCache, deleted_matches: inMemoryDeletedMatches }); }
   catch (e) { res.status(500).json({ error: e.message }); }
 });
+
 app.post('/api/matches', async (req, res) => {
   try {
     const body = req.body || {};
@@ -404,9 +371,11 @@ app.post('/api/matches', async (req, res) => {
     res.json({ success: true, v: serverDataVersion, persisted: true });
   } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
+
 app.get('/api/matches/version', (_req, res) => res.json({ v: serverDataVersion }));
 app.get('/api/timer-state', (_req, res) => res.json(inMemoryTimerState));
 app.get('/api/stream-sources', (_req, res) => res.setHeader('Cache-Control', 'no-store').json(inMemoryStreamSources));
+
 app.post('/api/stream-sources', async (req, res) => {
   const { id, label, url } = req.body || {};
   if (!url || !/^https?:\/\//i.test(url)) return res.status(400).json({ success: false, error: 'Valid HTTP/HTTPS URL required' });
@@ -416,12 +385,14 @@ app.post('/api/stream-sources', async (req, res) => {
   try { await pushJsonToGitHub({ stream_sources: inMemoryStreamSources }); res.json({ success: true, sources: inMemoryStreamSources, persisted: true }); }
   catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
+
 app.post('/api/stream-sources/delete/:id', async (req, res) => {
   inMemoryStreamSources = inMemoryStreamSources.filter(s => s.id !== req.params.id);
   sourceSyncCache.updatedAt = 0;
   try { await pushJsonToGitHub({ stream_sources: inMemoryStreamSources }); res.json({ success: true, sources: inMemoryStreamSources, persisted: true }); }
   catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
+
 app.get('/api/parse-source', async (req, res) => {
   if (!req.query.url) return res.status(400).json({ success: false, error: 'Missing url' });
   try {
@@ -431,28 +402,13 @@ app.get('/api/parse-source', async (req, res) => {
     res.json({ success: true, count: matches.length, matches });
   } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
+
 app.get('/api/sync-stream-sources', async (_req, res) => {
   try { const data = await syncAllSources(); res.setHeader('Cache-Control', 'no-store'); res.json({ success: true, ...data }); }
   catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
-// Keep server-side source cache warm every 60 seconds; frontend applies changes to Cloudflare match storage.
 setInterval(() => { if (inMemoryStreamSources.length) syncAllSources().catch(e => console.error('Source sync:', e.message)); }, 60000);
-
-app.get('/api/fetch-score', async (req, res) => {
-  const target = String(req.query.id || '');
-  if (!target) return res.status(400).json({ success: false, message: 'Missing id/url' });
-  try {
-    const m = target.match(/\/(\d+)/) || target.match(/\d{5,7}/);
-    const cbMatchId = m ? (m[1] || m[0]) : target;
-    const cbRes = await fetch(`https://www.cricbuzz.com/api/cricket-match/commentary/${cbMatchId}`, { headers: { 'User-Agent': 'Mozilla/5.0' } });
-    if (!cbRes.ok) throw new Error('Cricbuzz fetch failed');
-    const cbJson = await cbRes.json(); const h = cbJson.matchHeader || {}; const mini = cbJson.miniscore || {};
-    let s1 = '', s2 = '';
-    (mini.matchScoreDetails?.inningsScoreList || []).forEach(sc => { const v = `${sc.score || sc.runs}/${sc.wickets || 0} (${sc.overs || 0} ov)`; if (sc.inningsId === 1) s1 = v; else if (sc.inningsId === 2) s2 = v; });
-    res.json({ success: true, t1: h.team1?.name || 'Team 1', t2: h.team2?.name || 'Team 2', t1_score: s1, t2_score: s2, isLive: h.state === 'inprogress', isFinished: h.state === 'complete' });
-  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
-});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Render Server running on port ${PORT}`));
