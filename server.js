@@ -6,10 +6,31 @@ app.use(cors());
 app.use(express.json({ limit: '15mb' }));
 app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 
-const GITHUB_CONFIG = {
-  owner: 'vsdevelopers789-hash', repo: 'live-stream-data',
-  path: 'matches.json', branch: 'main', token: process.env.GITHUB_TOKEN
-};
+// GitHub repository file is in the repository ROOT (not inside a subfolder).
+// Render -> Environment must contain GITHUB_TOKEN with Contents: Read and write access.
+const GITHUB_CONFIG = Object.freeze({
+  owner: 'vsdevelopers789-hash',
+  repo: 'live-stream-data',
+  path: 'matches.json',
+  branch: 'main',
+  token: process.env.GITHUB_TOKEN
+});
+
+function githubFileUrl(includeBranch = false) {
+  const safePath = GITHUB_CONFIG.path.split('/').map(encodeURIComponent).join('/');
+  const url = new URL(`https://api.github.com/repos/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/contents/${safePath}`);
+  if (includeBranch) url.searchParams.set('ref', GITHUB_CONFIG.branch);
+  return url;
+}
+
+function githubHeaders() {
+  return {
+    Authorization: `Bearer ${GITHUB_CONFIG.token}`,
+    Accept: 'application/vnd.github+json',
+    'X-GitHub-Api-Version': '2022-11-28',
+    'User-Agent': 'Render-Backend-LiveSync'
+  };
+}
 
 let inMemoryMatchesCache = [];
 let inMemoryDeletedMatches = [];
@@ -26,47 +47,86 @@ let githubWriteQueue = Promise.resolve();
 app.get('/ping', (_req, res) => res.status(200).send('SERVER_ACTIVE_OK'));
 
 async function fetchRawJsonFromGitHub() {
-  if (!GITHUB_CONFIG.token) throw new Error('GITHUB_TOKEN environment variable is missing');
-  const fileUrl = `https://api.github.com/repos/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/contents/${GITHUB_CONFIG.path}?_t=${Date.now()}`;
-  const ghRes = await fetch(fileUrl, { headers: {
-    Authorization: `Bearer ${GITHUB_CONFIG.token}`, Accept: 'application/vnd.github+json',
-    'User-Agent': 'Render-Backend-LiveSync'
-  }});
-  if (!ghRes.ok) throw new Error(`GitHub fetch failed: ${ghRes.status} ${ghRes.statusText}`);
+  if (!GITHUB_CONFIG.token) throw new Error('GITHUB_TOKEN environment variable is missing in Render');
+  const fileUrl = githubFileUrl(true);
+  fileUrl.searchParams.set('_t', String(Date.now()));
+  const ghRes = await fetch(fileUrl, { headers: githubHeaders() });
+  if (!ghRes.ok) {
+    const detail = await ghRes.text().catch(() => '');
+    throw new Error(`GitHub fetch failed (${ghRes.status}): ${detail.slice(0, 400) || ghRes.statusText}`);
+  }
   const fileData = await ghRes.json();
-  const decodedContent = Buffer.from(String(fileData.content || '').replace(/\s/g, ''), 'base64').toString('utf8');
-  const parsedData = JSON.parse(decodedContent);
-  // Keep the Render/Cloudflare database physically separate from GitHub's own match list.
-  // Older builds wrote both databases to `matches`, causing one database to overwrite the other.
+  if (!fileData.content || !fileData.sha) throw new Error('GitHub matches.json response has no content or SHA');
+  let parsedData;
+  try {
+    const decoded = Buffer.from(String(fileData.content).replace(/\s/g, ''), 'base64').toString('utf8');
+    parsedData = JSON.parse(decoded);
+  } catch (error) {
+    throw new Error(`GitHub matches.json is not valid Base64 JSON: ${error.message}`);
+  }
+  if (!parsedData || Array.isArray(parsedData) || typeof parsedData !== 'object') {
+    throw new Error('GitHub matches.json must contain a JSON object');
+  }
+
+  // Keep Render/Cloudflare match data separate from the source's own `matches` list.
   if (Array.isArray(parsedData.cloudflare_matches)) inMemoryMatchesCache = parsedData.cloudflare_matches;
   else if (!githubLoaded) inMemoryMatchesCache = [];
   if (Array.isArray(parsedData.cloudflare_deleted_matches)) inMemoryDeletedMatches = parsedData.cloudflare_deleted_matches;
   else if (!githubLoaded) inMemoryDeletedMatches = [];
-  githubLoaded = true;
-  if (parsedData.category_visibility) inMemoryCategoryVisibility = parsedData.category_visibility;
-  if (parsedData.sub_categories) inMemorySubCategories = parsedData.sub_categories;
+  if (parsedData.category_visibility && typeof parsedData.category_visibility === 'object') inMemoryCategoryVisibility = parsedData.category_visibility;
+  if (parsedData.sub_categories && typeof parsedData.sub_categories === 'object') inMemorySubCategories = parsedData.sub_categories;
   if (Array.isArray(parsedData.stream_sources)) inMemoryStreamSources = parsedData.stream_sources;
+  githubLoaded = true;
+  serverDataVersion = Date.now().toString();
   return { parsedData, sha: fileData.sha };
 }
 
 async function pushJsonToGitHub(payload) {
-  if (!GITHUB_CONFIG.token) return false;
+  if (!GITHUB_CONFIG.token) throw new Error('GITHUB_TOKEN environment variable is missing in Render');
   const write = async () => {
-    const fileUrl = `https://api.github.com/repos/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/contents/${GITHUB_CONFIG.path}`;
-    const headers = { Authorization: `Bearer ${GITHUB_CONFIG.token}`, Accept: 'application/vnd.github+json', 'User-Agent': 'Render-Backend-LiveSync' };
-    const getRes = await fetch(`${fileUrl}?_t=${Date.now()}`, { headers });
-    if (!getRes.ok) throw new Error(`GitHub read before write failed: ${getRes.status}`);
+    const fileUrl = githubFileUrl(false);
+    const readUrl = githubFileUrl(true);
+    readUrl.searchParams.set('_t', String(Date.now()));
+    const headers = githubHeaders();
+    const getRes = await fetch(readUrl, { headers });
+    if (!getRes.ok) {
+      const detail = await getRes.text().catch(() => '');
+      throw new Error(`GitHub read before write failed (${getRes.status}): ${detail.slice(0, 400) || getRes.statusText}`);
+    }
     const file = await getRes.json();
-    const existing = JSON.parse(Buffer.from(String(file.content || '').replace(/\s/g, ''), 'base64').toString('utf8') || '{}');
-    // Merge only supplied keys; preserve GitHub matches and Cloudflare matches independently.
+    if (!file.sha || typeof file.content !== 'string') throw new Error('GitHub did not return matches.json content and SHA');
+
+    let existing;
+    try {
+      existing = JSON.parse(Buffer.from(file.content.replace(/\s/g, ''), 'base64').toString('utf8') || '{}');
+    } catch (error) {
+      throw new Error(`Cannot update matches.json because its existing JSON is invalid: ${error.message}`);
+    }
+    if (!existing || Array.isArray(existing) || typeof existing !== 'object') {
+      throw new Error('Cannot update matches.json: root JSON value must be an object');
+    }
+
+    // Merge only changed fields; preserve unrelated GitHub data and source match lists.
     const merged = { ...existing, ...payload };
-    const content = Buffer.from(JSON.stringify(merged, null, 2)).toString('base64');
-    const putRes = await fetch(fileUrl, { method: 'PUT', headers: { ...headers, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: `Render Auto-Sync: ${Date.now()}`, content, sha: file.sha, branch: GITHUB_CONFIG.branch }) });
-    if (!putRes.ok) throw new Error(`GitHub write failed: ${putRes.status} ${putRes.statusText}`);
+    const content = Buffer.from(JSON.stringify(merged, null, 2), 'utf8').toString('base64');
+    const putRes = await fetch(fileUrl, {
+      method: 'PUT',
+      headers: { ...headers, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: `Render Auto-Sync: ${new Date().toISOString()}`,
+        content,
+        sha: file.sha,
+        branch: GITHUB_CONFIG.branch
+      })
+    });
+    if (!putRes.ok) {
+      const detail = await putRes.text().catch(() => '');
+      throw new Error(`GitHub write failed (${putRes.status}): ${detail.slice(0, 500) || putRes.statusText}`);
+    }
     return true;
   };
-  // Serialize writes so simultaneous saves cannot race on the GitHub SHA and erase newer data.
+
+  // Queue writes to avoid two Render requests racing with the same GitHub SHA.
   const task = githubWriteQueue.then(write, write);
   githubWriteQueue = task.catch(() => {});
   return task;
@@ -138,70 +198,23 @@ function parseM3U(text, source) {
   return channels;
 }
 
-function detectPlayerType(url, fallbackUrl = '') {
-  let candidate = `${url || ''} ${fallbackUrl || ''}`;
-  try { candidate = decodeURIComponent(candidate); } catch (_) {}
-  if (/\.mpd(?:$|[?#])/i.test(candidate)) return 'dash';
-  if (/\.m3u8?(?:$|[?#])/i.test(candidate)) return 'hls';
-  if (/\.(?:mp4|m4v|webm|mov)(?:$|[?#])/i.test(candidate)) return 'file';
-  return 'iframe';
-}
-
-function extractClearKeyMaterial(item = {}) {
-  // Accept only key material explicitly supplied by the source feed. Do not
-  // infer keys from cookies, signed URLs, or provider license endpoints.
-  const direct = item.drm_key ?? item.drmKey ?? item.clear_keys ?? item.clearKeys ??
-    item.content_key ?? item.contentKey ?? item.drmLicense ?? item.licenseKey;
-  if (direct && typeof direct === 'object') return JSON.stringify(direct);
-  if (typeof direct === 'string' && direct.trim()) return direct.trim();
-  const keyId = item.key_id ?? item.keyId ?? item.kid;
-  const key = item.key ?? item.decryption_key ?? item.decryptionKey;
-  if (typeof keyId === 'string' && typeof key === 'string' && keyId.trim() && key.trim()) {
-    return `${keyId.trim()}:${key.trim()}`;
-  }
-  return '';
-}
-
-function streamCandidates(item) {
-  const fields = [
-    ['Primary Proxy', item.proxied_url || item.proxiedUrl || item.proxy_url || item.proxyUrl],
-    ['Backup Proxy', item.backup_proxied_url || item.backupProxiedUrl || item.backup_proxy_url || item.backupProxyUrl],
-    ['Raw URL', item.raw_url || item.rawUrl || item.url || item.stream_url || item.streamUrl || item.stream || item.play_url || item.playUrl || item.src]
-  ];
-  const mediaHint = [item.raw_url, item.rawUrl, item.url, item.stream_url, item.streamUrl, item.stream, item.play_url, item.playUrl, item.src, ...fields.map(x => x[1])].find(v => typeof v === 'string' && /^https?:\/\//i.test(v)) || '';
-  const seen = new Set();
-  return fields.filter(([, value]) => typeof value === 'string' && /^https?:\/\//i.test(value.trim()))
-    .map(([label, value], index) => ({ label, url: value.trim(), priority: index + 1, playerType: detectPlayerType(value, mediaHint) }))
-    .filter(entry => { if (seen.has(entry.url)) return false; seen.add(entry.url); return true; });
-}
-
 function normaliseChannelEntry(item, source, index) {
   const name = String(item.name || item.channel_name || item.tvg_name || item.title || item.tvgName || `Channel ${index + 1}`).trim();
   const channelId = String(item.id || item.channel_id || item.tvg_id || item.tvgId || name).trim();
-  const candidates = streamCandidates(item);
-  if (!candidates.length) return null;
+  const url = String(item.raw_url || item.url || item.stream_url || item.stream || item.play_url || '').trim();
+  if (!/^https?:\/\//i.test(url)) return null;
   const logo = String(item.logo || item.tvg_logo || item.tvgLogo || item.icon || item.image || '').trim();
-  const headers = item.headers && typeof item.headers === 'object' ? item.headers : {};
-  const stable = `${source.id}:${channelId}`;
-  const servers = candidates.map((candidate, n) => ({
-    id: `${stable}:server:${n + 1}`,
-    name: `${name} (${candidate.label})`, channelName: name, logo,
-    url: candidate.url, headers, isBrowser: candidate.playerType === 'iframe',
-    playerType: candidate.playerType, sourceManaged: true, visible: true, pos: n + 1,
-    fallbackFor: n ? candidates[n - 1].url : '',
-    drmProtected: !!(extractClearKeyMaterial(item) || item.drm || item.license_url || item.licenseUrl),
-    drmSystem: item.drm_system || item.drmSystem || (extractClearKeyMaterial(item) ? 'clearkey' : ''),
-    drmKey: extractClearKeyMaterial(item),
-    // A content key is never treated as a license endpoint or copied into playback config.
-    licenseUrl: item.license_url || item.licenseUrl || item.widevine_license_url || item.widevineLicenseUrl || ''
-  }));
+  const playerType = /\.mpd(?:$|\?)/i.test(url) ? 'dash' : (/\.m3u8?(?:$|\?)/i.test(url) ? 'hls' : 'file');
   return {
-    id: stable, fb_key: `m3u_${Buffer.from(stable).toString('base64url').slice(0, 48)}`,
+    id: `${source.id}:${channelId}`, fb_key: `m3u_${Buffer.from(`${source.id}:${channelId}`).toString('base64url').slice(0, 48)}`,
     sourceId: source.id, sourceLabel: source.label || 'Feed', isChannelCard: true,
     channelId, channelName: name, groupTitle: String(item.group_title || item.group || item.category || 'Live TV'),
     logo, card: logo, category: 'Others', sub_category: String(item.group_title || item.group || 'Live TV'),
     title: name, team_1: name, team_2: '', status: 'live', time: '', timezone: 'Asia/Kolkata',
-    servers, networkLogo: String(item.network_logo || item.networkLogo || '').trim()
+    servers: [{ id: `${source.id}:${channelId}:server`, name, channelName: name, logo, url,
+      headers: item.headers && typeof item.headers === 'object' ? item.headers : {},
+      isBrowser: false, playerType, sourceManaged: true, visible: true, pos: 1 }],
+    networkLogo: String(item.network_logo || item.networkLogo || '').trim()
   };
 }
 
@@ -237,7 +250,7 @@ async function fetchAndParseSource(source) {
 
     // Common channel-only JSON formats (e.g. { channels: [{name, logo, raw_url}] }).
     const channelList = Array.isArray(json) ? json : (json.channels || json.Channels || json.channel_list || json.items || []);
-    if (Array.isArray(channelList) && channelList.length && channelList.some(x => x && (x.raw_url || x.proxied_url || x.backup_proxied_url || x.url || x.stream_url || x.channel_name || x.tvg_id || x.channel_id))) {
+    if (Array.isArray(channelList) && channelList.length && channelList.some(x => x && (x.raw_url || x.channel_name || x.tvg_id || x.channel_id))) {
       const parsedChannels = channelList.map((x, i) => normaliseChannelEntry(x, source, i)).filter(Boolean);
       // Some channel JSON indexes point back to an M3U source that contains tvg-logo metadata.
       if (parsedChannels.some(x => !x.logo) && typeof json.source === 'string' && /^https?:\/\//i.test(json.source)) {
@@ -280,19 +293,16 @@ async function fetchAndParseSource(source) {
           : (typeof group === 'object' ? Object.entries(group) : []);
         for (const [key, value] of entries) {
           const entry = typeof value === 'string' ? { url: value } : (value && typeof value === 'object' ? value : {});
-          const candidates = streamCandidates(entry);
-          for (const candidate of candidates) serverEntries.push({
-            name: `${String(entry.name || `${groupName} ${key}`).trim()} · ${candidate.label}`,
-            url: candidate.url,
+          const streamUrl = String(entry.url || entry.raw_url || entry.stream_url || entry.play_url || entry.src || '').trim();
+          if (!/^https?:\/\//i.test(streamUrl)) continue;
+          serverEntries.push({
+            name: String(entry.name || `${groupName} ${key}`).trim(),
+            url: streamUrl,
             headers: entry.headers && typeof entry.headers === 'object' ? entry.headers : {},
-            playerType: candidate.playerType,
-            priority: candidate.priority,
-            drmKey: extractClearKeyMaterial(entry) || extractClearKeyMaterial(m),
-            drmSystem: entry.drm_system || entry.drmSystem || m.drm_system || m.drmSystem || ''
+            playerType: /\.mpd(?:$|[?#])/i.test(streamUrl) ? 'dash' : (/\.m3u8?(?:$|[?#])/i.test(streamUrl) ? 'hls' : 'file')
           });
         }
       }
-      serverEntries.sort((a, b) => (a.priority || 99) - (b.priority || 99));
       const seenStreamUrls = new Set();
       const servers = serverEntries.filter(entry => {
         const key = entry.url;
@@ -302,16 +312,16 @@ async function fetchAndParseSource(source) {
         name: `${title || t1 || 'Live'} (${entry.name})`, url: entry.url,
         headers: entry.headers, isBrowser: false, playerType: entry.playerType,
         sourceManaged: true, visible: true, pos: n + 1,
-        drmProtected: !!(entry.drmKey || extractClearKeyMaterial(m) || m.drm || m.license_url || m.licenseUrl),
-        drmSystem: entry.drmSystem || (entry.drmKey ? 'clearkey' : (m.drm_system || m.drmSystem || '')),
-        drmKey: entry.drmKey || extractClearKeyMaterial(m),
-        // Official license endpoint remains separate from optional source-supplied ClearKey data.
+        drmProtected: !!m.drm_key || !!m.drm || !!m.license_url || !!m.licenseUrl,
+        drmSystem: m.drm_system || m.drmSystem || '',
+        // Only accept an official license endpoint. A content decryption key is
+        // not a license URL and is deliberately never appended to the stream URL.
         licenseUrl: m.license_url || m.licenseUrl || m.widevine_license_url || m.widevineLicenseUrl || ''
       }));
       const hasMatchDetails = !!(t1 && t2 && title);
       if (!hasMatchDetails && servers.length) {
-        return normaliseChannelEntry({ ...m, name: title || m.name || `Channel ${i + 1}`, id: m.id || m.match_id || i,
-          logo: m.logo || m.image || m.banner || m.card || '' }, source, i);
+        return normaliseChannelEntry({ name: title || m.name || `Channel ${i + 1}`, id: m.id || m.match_id || i,
+          logo: m.logo || m.image || m.banner || m.card || '', raw_url: servers[0].url }, source, i);
       }
       return { id: String(m.match_id || m.id || `${source.id}_${i}`), sourceId: source.id,
         sourceMatchId: String(m.match_id || m.id || `${source.id}_${i}`), title: title || `${t1} vs ${t2}`,
@@ -322,9 +332,8 @@ async function fetchAndParseSource(source) {
         status: /finish|ended|\bft\b|complete/i.test(String(m.status || m.match_status || 'live')) ? 'finished' : 'live',
         time: m.time || m.match_time || m.date_time || m.date || m.start_time || '',
         timezone: m.timezone || m.tz || 'Asia/Kolkata',
-        drmProtected: !!(extractClearKeyMaterial(m) || m.drm || m.license_url || m.licenseUrl),
-        drmSystem: m.drm_system || m.drmSystem || (extractClearKeyMaterial(m) ? 'clearkey' : ''),
-        drmKey: extractClearKeyMaterial(m),
+        drmProtected: !!m.drm_key || !!m.drm || !!m.license_url || !!m.licenseUrl,
+        drmSystem: m.drm_system || m.drmSystem || '',
         licenseUrl: m.license_url || m.licenseUrl || m.widevine_license_url || m.widevineLicenseUrl || '',
         servers };
     }).filter(m => m.servers && m.servers.length);
