@@ -144,9 +144,7 @@ function cleanSourceUrl(value) {
 function normaliseChannelEntry(item, source, index) {
   const name = String(item.name || item.channel_name || item.tvg_name || item.title || item.tvgName || `Channel ${index + 1}`).trim();
   const channelId = String(item.id || item.channel_id || item.tvg_id || item.tvgId || name).trim();
-  
-  // Proxied URL is prioritized first
-  let url = cleanSourceUrl(item.proxied_url || item.raw_url || item.url || item.stream_url || item.stream || item.play_url || '');
+  let url = cleanSourceUrl(item.raw_url || item.url || item.stream_url || item.stream || item.play_url || '');
   if (!/^https?:\/\//i.test(url)) return null;
 
   const drmKey = item.drm_key || item.drm || item.license_url || item.licenseUrl || item.drm_license || item.drmLicense || '';
@@ -202,7 +200,7 @@ async function fetchAndParseSource(source) {
     try { json = JSON.parse(body); } catch (_) { throw new Error('Unsupported source: expected M3U or JSON'); }
 
     const channelList = Array.isArray(json) ? json : (json.channels || json.Channels || json.channel_list || json.items || []);
-    if (Array.isArray(channelList) && channelList.length && channelList.some(x => x && (x.proxied_url || x.raw_url || x.url || x.channel_name || x.tvg_id || x.channel_id))) {
+    if (Array.isArray(channelList) && channelList.length && channelList.some(x => x && (x.raw_url || x.channel_name || x.tvg_id || x.channel_id))) {
       const parsedChannels = channelList.map((x, i) => normaliseChannelEntry(x, source, i)).filter(Boolean);
       if (parsedChannels.some(x => !x.logo) && typeof json.source === 'string' && /^https?:\/\//i.test(json.source)) {
         try {
@@ -242,9 +240,10 @@ async function fetchAndParseSource(source) {
           : (typeof group === 'object' ? Object.entries(group) : []);
         for (const [key, value] of entries) {
           const entry = typeof value === 'string' ? { url: value } : (value && typeof value === 'object' ? value : {});
-          let streamUrl = cleanSourceUrl(entry.proxied_url || entry.raw_url || entry.url || entry.stream_url || entry.play_url || entry.src || (typeof value === 'string' ? value : ''));
+          let streamUrl = cleanSourceUrl(entry.url || entry.raw_url || entry.stream_url || entry.play_url || entry.src || (typeof value === 'string' ? value : ''));
           if (!/^https?:\/\//i.test(streamUrl)) continue;
 
+          // Combine DRM Key / License into the stream URL if present
           const drmKey = entry.drm_key || entry.drm || entry.license_url || entry.licenseUrl || entry.drm_license || entry.drmLicense || m.drm_key || m.drm || m.license_url || m.licenseUrl || m.drm_license || m.drmLicense || '';
           const drmScheme = entry.drm_scheme || entry.drmScheme || m.drm_scheme || m.drmScheme || 'clearkey';
 
