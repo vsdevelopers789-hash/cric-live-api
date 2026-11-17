@@ -262,7 +262,14 @@ async function fetchAndParseSource(source) {
     return list.map((m, i) => {
       const title = String(m.event_name || m.title || m.synopsis || m.name || '').trim();
       const { t1, t2 } = extractTeams(m, title);
-      const matchDrmKey = String(m.drm_key || m.drmKey || m.key || '').trim();
+      
+      // 1. సోర్స్ నుండి వస్తున్న DRM కీ లేదా మ్యాచ్ ID ని క్యాప్చర్ చేయడం
+      const sourceMatchId = String(m.match_id || m.id || `${source.id}_${i}`);
+      const newDrmKey = String(m.drm_key || m.drmKey || m.key || '').trim();
+
+      // 2. ముఖ్యమైన మార్పు: ఇప్పటికే మెమరీ క్యాష్‌లో ఈ మ్యాచ్ ఉంటే, దాని పాత DRM కీ ని కోల్పోకుండా అలాగే భద్రపరుచుకోవడం (Preserve old key)
+      const existingMatch = inMemoryMatchesCache.find(x => String(x.id) === sourceMatchId || String(x.fb_key) === sourceMatchId);
+      const matchDrmKey = newDrmKey || (existingMatch ? existingMatch.drm_key : '') || '';
       
       const serverGroups = [
         ['CnpTV', m.CnpTV], ['Alpha', m.stream_url_alpha],
@@ -276,9 +283,14 @@ async function fetchAndParseSource(source) {
           : (typeof group === 'object' ? Object.entries(group) : []);
         for (const [key, value] of entries) {
           const entry = typeof value === 'string' ? { url: value } : (value && typeof value === 'object' ? value : {});
-          // Proxied URL లేదా raw URL ఫెచ్ చేసుకునేటప్పుడు ప్రయారిటీ ఇవ్వడం
-          const streamUrl = String(entry.proxied_url || entry.backup_proxied_url || entry.raw_url || entry.url || entry.stream_url || entry.play_url || entry.src || '').trim();
+          let streamUrl = String(entry.proxied_url || entry.backup_proxied_url || entry.raw_url || entry.url || entry.stream_url || entry.play_url || entry.src || '').trim();
           if (!/^https?:\/\//i.test(streamUrl)) continue;
+
+          // 3. .mpd లింక్ అయి ఉండి, కీ ఉంటే లింక్ చివర ఆటోమేటిగ్గా పర్మినెంట్‌గా అపెండ్ చేయడం
+          if (streamUrl.includes('.mpd') && !streamUrl.includes('drmLicense=') && matchDrmKey) {
+              streamUrl += `|drmLicense=${encodeURIComponent(matchDrmKey.trim())}`;
+          }
+
           serverEntries.push({
             name: String(entry.name || `${groupName} ${key}`).trim(),
             url: streamUrl,
@@ -304,13 +316,13 @@ async function fetchAndParseSource(source) {
 
       const hasMatchDetails = !!(t1 && t2 && title);
       if (!hasMatchDetails && servers.length) {
-        return normaliseChannelEntry({ name: title || m.name || `Channel ${i + 1}`, id: m.id || m.match_id || i,
+        return normaliseChannelEntry({ name: title || m.name || `Channel ${i + 1}`, id: sourceMatchId,
           logo: m.logo || m.image || m.banner || m.card || '', raw_url: servers[0].url, drm_key: matchDrmKey }, source, i);
       }
       
       return { 
-        id: String(m.match_id || m.id || `${source.id}_${i}`), sourceId: source.id,
-        sourceMatchId: String(m.match_id || m.id || `${source.id}_${i}`), title: title || `${t1} vs ${t2}`,
+        id: sourceMatchId, sourceId: source.id,
+        sourceMatchId: sourceMatchId, title: title || `${t1} vs ${t2}`,
         team_1: t1, team_2: t2, team_1_logo: m.team_1_logo || m.t1_logo || m.home_team_logo || m.team1_logo || '', team_2_logo: m.team_2_logo || m.t2_logo || m.away_team_logo || m.team2_logo || '', category: m.category || m.sport || m.game || 'Cricket',
         sub_category: m.sub_category || m.series || title || `${t1} vs ${t2}`,
         card: m.banner || m.card || m.image || m.cover_image || '',
@@ -318,7 +330,7 @@ async function fetchAndParseSource(source) {
         status: /finish|ended|\bft\b|complete/i.test(String(m.status || m.match_status || 'live')) ? 'finished' : 'live',
         time: m.time || m.match_time || m.date_time || m.date || m.start_time || '',
         timezone: m.timezone || m.tz || 'Asia/Kolkata',
-        drm_key: matchDrmKey,
+        drm_key: matchDrmKey, // కీ ఎప్పటికీ మిస్ కాకుండా ప్రిజర్వ్ అవుతుంది
         drmProtected: !!matchDrmKey || !!m.drm || !!m.license_url || !!m.licenseUrl,
         drmSystem: m.drm_system || m.drmSystem || '',
         licenseUrl: m.license_url || m.licenseUrl || m.widevine_license_url || m.widevineLicenseUrl || '',
