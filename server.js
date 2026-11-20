@@ -41,6 +41,36 @@ let sourceSyncRunning = false;
 let githubLoaded = false;
 let githubWriteQueue = Promise.resolve();
 
+
+// ---------------------------------------------------------------------------
+// Source-feed deletion protection.
+// A deleted feed match is identified by sourceId + sourceMatchId, not by the
+// local Firebase/GitHub key (which can change when records are migrated).
+// cloudflare_deleted_matches is persisted in matches.json by /api/matches.
+function sourceIdentityKey(item) {
+  if (!item || !item.sourceId || !item.sourceMatchId) return "";
+  return `${String(item.sourceId)}::${String(item.sourceMatchId)}`;
+}
+
+function getSourceTombstoneKeys() {
+  const keys = new Set();
+  for (const item of inMemoryDeletedMatches) {
+    // Only feed-backed records can suppress a source-feed re-import.
+    const key = sourceIdentityKey(item);
+    if (key && (item._isAutoFeedMatch === true || item.sourceId)) keys.add(key);
+  }
+  return keys;
+}
+
+function filterDeletedSourceMatches(items) {
+  const blocked = getSourceTombstoneKeys();
+  if (!blocked.size) return items;
+  return items.filter(item => {
+    const key = sourceIdentityKey(item);
+    return !key || !blocked.has(key);
+  });
+}
+
 app.get('/ping', (_req, res) => res.status(200).send('SERVER_ACTIVE_OK'));
 
 async function fetchRawJsonFromGitHub() {
@@ -262,14 +292,7 @@ async function fetchAndParseSource(source) {
     return list.map((m, i) => {
       const title = String(m.event_name || m.title || m.synopsis || m.name || '').trim();
       const { t1, t2 } = extractTeams(m, title);
-      
-      // 1. సోర్స్ నుండి వస్తున్న DRM కీ లేదా మ్యాచ్ ID ని క్యాప్చర్ చేయడం
-      const sourceMatchId = String(m.match_id || m.id || `${source.id}_${i}`);
-      const newDrmKey = String(m.drm_key || m.drmKey || m.key || '').trim();
-
-      // 2. ముఖ్యమైన మార్పు: ఇప్పటికే మెమరీ క్యాష్‌లో ఈ మ్యాచ్ ఉంటే, దాని పాత DRM కీ ని కోల్పోకుండా అలాగే భద్రపరుచుకోవడం (Preserve old key)
-      const existingMatch = inMemoryMatchesCache.find(x => String(x.id) === sourceMatchId || String(x.fb_key) === sourceMatchId);
-      const matchDrmKey = newDrmKey || (existingMatch ? existingMatch.drm_key : '') || '';
+      const matchDrmKey = String(m.drm_key || m.drmKey || m.key || '').trim();
       
       const serverGroups = [
         ['CnpTV', m.CnpTV], ['Alpha', m.stream_url_alpha],
@@ -283,14 +306,9 @@ async function fetchAndParseSource(source) {
           : (typeof group === 'object' ? Object.entries(group) : []);
         for (const [key, value] of entries) {
           const entry = typeof value === 'string' ? { url: value } : (value && typeof value === 'object' ? value : {});
-          let streamUrl = String(entry.proxied_url || entry.backup_proxied_url || entry.raw_url || entry.url || entry.stream_url || entry.play_url || entry.src || '').trim();
+          // Proxied URL లేదా raw URL ఫెచ్ చేసుకునేటప్పుడు ప్రయారిటీ ఇవ్వడం
+          const streamUrl = String(entry.proxied_url || entry.backup_proxied_url || entry.raw_url || entry.url || entry.stream_url || entry.play_url || entry.src || '').trim();
           if (!/^https?:\/\//i.test(streamUrl)) continue;
-
-          // 3. .mpd లింక్ అయి ఉండి, కీ ఉంటే లింక్ చివర ఆటోమేటిగ్గా పర్మినెంట్‌గా అపెండ్ చేయడం
-          if (streamUrl.includes('.mpd') && !streamUrl.includes('drmLicense=') && matchDrmKey) {
-              streamUrl += `|drmLicense=${encodeURIComponent(matchDrmKey.trim())}`;
-          }
-
           serverEntries.push({
             name: String(entry.name || `${groupName} ${key}`).trim(),
             url: streamUrl,
@@ -316,13 +334,13 @@ async function fetchAndParseSource(source) {
 
       const hasMatchDetails = !!(t1 && t2 && title);
       if (!hasMatchDetails && servers.length) {
-        return normaliseChannelEntry({ name: title || m.name || `Channel ${i + 1}`, id: sourceMatchId,
+        return normaliseChannelEntry({ name: title || m.name || `Channel ${i + 1}`, id: m.id || m.match_id || i,
           logo: m.logo || m.image || m.banner || m.card || '', raw_url: servers[0].url, drm_key: matchDrmKey }, source, i);
       }
       
       return { 
-        id: sourceMatchId, sourceId: source.id,
-        sourceMatchId: sourceMatchId, title: title || `${t1} vs ${t2}`,
+        id: String(m.match_id || m.id || `${source.id}_${i}`), sourceId: source.id,
+        sourceMatchId: String(m.match_id || m.id || `${source.id}_${i}`), title: title || `${t1} vs ${t2}`,
         team_1: t1, team_2: t2, team_1_logo: m.team_1_logo || m.t1_logo || m.home_team_logo || m.team1_logo || '', team_2_logo: m.team_2_logo || m.t2_logo || m.away_team_logo || m.team2_logo || '', category: m.category || m.sport || m.game || 'Cricket',
         sub_category: m.sub_category || m.series || title || `${t1} vs ${t2}`,
         card: m.banner || m.card || m.image || m.cover_image || '',
@@ -330,7 +348,7 @@ async function fetchAndParseSource(source) {
         status: /finish|ended|\bft\b|complete/i.test(String(m.status || m.match_status || 'live')) ? 'finished' : 'live',
         time: m.time || m.match_time || m.date_time || m.date || m.start_time || '',
         timezone: m.timezone || m.tz || 'Asia/Kolkata',
-        drm_key: matchDrmKey, // కీ ఎప్పటికీ మిస్ కాకుండా ప్రిజర్వ్ అవుతుంది
+        drm_key: matchDrmKey,
         drmProtected: !!matchDrmKey || !!m.drm || !!m.license_url || !!m.licenseUrl,
         drmSystem: m.drm_system || m.drmSystem || '',
         licenseUrl: m.license_url || m.licenseUrl || m.widevine_license_url || m.widevineLicenseUrl || '',
@@ -373,7 +391,11 @@ app.post('/api/matches', async (req, res) => {
   try {
     const body = req.body || {};
     if (Array.isArray(body.matches)) inMemoryMatchesCache = body.matches;
-    if (Array.isArray(body.deleted_matches)) inMemoryDeletedMatches = body.deleted_matches;
+    if (Array.isArray(body.deleted_matches)) {
+      inMemoryDeletedMatches = body.deleted_matches;
+      // Re-apply the latest deletion list on the next source sync request.
+      sourceSyncCache.updatedAt = 0;
+    }
     if (body.category_visibility) inMemoryCategoryVisibility = body.category_visibility;
     if (body.sub_categories) inMemorySubCategories = body.sub_categories;
     if (body.timerStatePayload) { inMemoryTimerState = { ...inMemoryTimerState, ...body.timerStatePayload }; delete body.timerStatePayload; }
@@ -409,15 +431,28 @@ app.get('/api/parse-source', async (req, res) => {
   if (!req.query.url) return res.status(400).json({ success: false, error: 'Missing url' });
   try {
     const source = { id: 'manual_parse', label: 'Manual Source', url: String(req.query.url) };
-    const matches = await fetchAndParseSource(source);
+    const parsedMatches = await fetchAndParseSource(source);
+    const matches = filterDeletedSourceMatches(parsedMatches);
     res.setHeader('Cache-Control', 'no-store');
-    res.json({ success: true, count: matches.length, matches });
+    res.json({ success: true, count: matches.length, matches,
+      suppressedDeleted: parsedMatches.length - matches.length });
   } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
 app.get('/api/sync-stream-sources', async (_req, res) => {
-  try { const data = await syncAllSources(); res.setHeader('Cache-Control', 'no-store'); res.json({ success: true, ...data }); }
-  catch (e) { res.status(500).json({ success: false, error: e.message }); }
+  try {
+    const data = await syncAllSources();
+    const matches = filterDeletedSourceMatches(data.channels || []);
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({
+      success: true,
+      updatedAt: data.updatedAt,
+      channels: matches,
+      count: matches.length,
+      suppressedDeleted: (data.channels || []).length - matches.length,
+      errors: data.errors || []
+    });
+  } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
 setInterval(() => { if (inMemoryStreamSources.length) syncAllSources().catch(e => console.error('Source sync:', e.message)); }, 60000);
