@@ -64,18 +64,47 @@ function filterDeletedSourceMatches(items) {
   });
 }
 
+function normalizeDrmValue(val) {
+  if (!val) return '';
+  if (typeof val === 'string') return val.trim();
+  if (typeof val === 'object') {
+    if (val.clearKeys && typeof val.clearKeys === 'object') {
+      return JSON.stringify(val.clearKeys);
+    }
+    const kid = val.kid || val.keyId || val.key_id || '';
+    const key = val.key || val.keyValue || val.key_value || '';
+    if (kid && key) return `${String(kid).trim()}:${String(key).trim()}`;
+    return JSON.stringify(val);
+  }
+  return '';
+}
+
 function extractDrmKeyFromObj(obj, fallback = '') {
-  if (!obj || typeof obj !== 'object') return fallback;
-  const candidate =
-    obj.drm_key ??
-    obj.drmKey ??
-    obj.clear_key ??
-    obj.clearKey ??
-    obj.clearkey ??
-    obj.key ??
-    fallback;
-  if (!candidate) return '';
-  return typeof candidate === 'string' ? candidate.trim() : JSON.stringify(candidate);
+  if (!obj || typeof obj !== 'object') return normalizeDrmValue(fallback);
+  const keysToCheck = [
+    'drm_key', 'drmKey', 'drm_keys', 'drmKeys',
+    'drmLicense', 'drm_license', 'licenseKey', 'license_key',
+    'clearKeys', 'clear_keys', 'clearkeys', 'clearkey', 'clear_key',
+    'mpd_key', 'mpdKey', 'drm', 'key', 'keys'
+  ];
+  for (const k of keysToCheck) {
+    if (obj[k] !== undefined && obj[k] !== null && obj[k] !== '') {
+      const normalized = normalizeDrmValue(obj[k]);
+      if (normalized) return normalized;
+    }
+  }
+  return normalizeDrmValue(fallback);
+}
+
+function appendDrmToMpdUrl(streamUrl, drmKey) {
+  const cleanUrl = String(streamUrl || '').trim();
+  const cleanKey = normalizeDrmValue(drmKey);
+  if (!cleanUrl || !cleanKey) return cleanUrl;
+  if (/\.mpd(?:$|[?#])/i.test(cleanUrl) && !/drmLicense=|clearKeys=/i.test(cleanUrl)) {
+    const sep = cleanUrl.includes('|') ? '&' : '|';
+    return `${cleanUrl}${sep}drmLicense=${encodeURIComponent(cleanKey)}`;
+  }
+  return cleanUrl;
 }
 
 app.get('/ping', (_req, res) => res.status(200).send('SERVER_ACTIVE_OK'));
@@ -214,7 +243,7 @@ function parseM3U(text, source) {
       if (pendingOptions['http-referrer']) headers['Referer'] = pendingOptions['http-referrer'];
       if (pendingOptions['http-cookie']) headers['Cookie'] = pendingOptions['http-cookie'];
       const drmKey = String(a['drm-key'] || a['drmkey'] || a['key'] || pendingOptions['drm-key'] || '').trim();
-      let url = line;
+      const url = appendDrmToMpdUrl(line, drmKey);
       const playerType = /\.mpd(?:$|[?#])/i.test(url) ? 'dash' : (/\.m3u8?(?:$|[?#])/i.test(url) ? 'hls' : 'iframe');
       const stable = `${source.id}:${channelId}`;
       channels.push({
@@ -260,11 +289,12 @@ function normaliseChannelEntry(item, source, index) {
   const name = String(item.name || item.channel_name || item.tvg_name || item.title || item.tvgName || `Channel ${index + 1}`).trim();
   const channelId = String(item.id || item.channel_id || item.tvg_id || item.tvgId || name).trim();
 
-  const url = String(item.proxied_url || item.backup_proxied_url || item.raw_url || item.url || item.stream_url || item.stream || item.play_url || '').trim();
-  if (!/^https?:\/\//i.test(url)) return null;
+  const rawUrl = String(item.proxied_url || item.backup_proxied_url || item.raw_url || item.url || item.stream_url || item.stream || item.play_url || '').trim();
+  if (!/^https?:\/\//i.test(rawUrl)) return null;
 
   const logo = String(item.logo || item.tvg_logo || item.tvgLogo || item.icon || item.image || '').trim();
   const drmKey = extractDrmKeyFromObj(item, '');
+  const url = appendDrmToMpdUrl(rawUrl, drmKey);
   const playerType = /\.mpd(?:$|[?#])/i.test(url) ? 'dash' : (/\.m3u8?(?:$|[?#])/i.test(url) ? 'hls' : 'file');
 
   return {
@@ -361,14 +391,16 @@ async function fetchAndParseSource(source) {
           : (typeof group === 'object' ? Object.entries(group) : []);
         for (const [key, value] of entries) {
           const entry = typeof value === 'string' ? { url: value } : (value && typeof value === 'object' ? value : {});
-          const streamUrl = String(entry.proxied_url || entry.backup_proxied_url || entry.raw_url || entry.url || entry.stream_url || entry.play_url || entry.src || '').trim();
-          if (!/^https?:\/\//i.test(streamUrl)) continue;
+          const rawStreamUrl = String(entry.proxied_url || entry.backup_proxied_url || entry.raw_url || entry.url || entry.stream_url || entry.play_url || entry.src || '').trim();
+          if (!/^https?:\/\//i.test(rawStreamUrl)) continue;
+          const entryDrmKey = extractDrmKeyFromObj(entry, matchDrmKey);
+          const streamUrl = appendDrmToMpdUrl(rawStreamUrl, entryDrmKey);
           serverEntries.push({
             name: String(entry.name || `${groupName} ${key}`).trim(),
             url: streamUrl,
             headers: entry.headers && typeof entry.headers === 'object' ? entry.headers : {},
             playerType: /\.mpd(?:$|[?#])/i.test(streamUrl) ? 'dash' : (/\.m3u8?(?:$|[?#])/i.test(streamUrl) ? 'hls' : 'file'),
-            drmKey: extractDrmKeyFromObj(entry, matchDrmKey)
+            drmKey: entryDrmKey
           });
         }
       }
@@ -379,9 +411,10 @@ async function fetchAndParseSource(source) {
         seenStreamUrls.add(key); return true;
       }).map((entry, n) => {
         const finalSrvDrm = entry.drmKey || matchDrmKey || '';
+        const finalUrl = appendDrmToMpdUrl(entry.url, finalSrvDrm);
         return {
           name: `${title || t1 || 'Live'} (${entry.name})`,
-          url: entry.url,
+          url: finalUrl,
           headers: entry.headers,
           isBrowser: false,
           playerType: entry.playerType,
