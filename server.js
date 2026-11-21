@@ -41,12 +41,6 @@ let sourceSyncRunning = false;
 let githubLoaded = false;
 let githubWriteQueue = Promise.resolve();
 
-
-// ---------------------------------------------------------------------------
-// Source-feed deletion protection.
-// A deleted feed match is identified by sourceId + sourceMatchId, not by the
-// local Firebase/GitHub key (which can change when records are migrated).
-// cloudflare_deleted_matches is persisted in matches.json by /api/matches.
 function sourceIdentityKey(item) {
   if (!item || !item.sourceId || !item.sourceMatchId) return "";
   return `${String(item.sourceId)}::${String(item.sourceMatchId)}`;
@@ -55,7 +49,6 @@ function sourceIdentityKey(item) {
 function getSourceTombstoneKeys() {
   const keys = new Set();
   for (const item of inMemoryDeletedMatches) {
-    // Only feed-backed records can suppress a source-feed re-import.
     const key = sourceIdentityKey(item);
     if (key && (item._isAutoFeedMatch === true || item.sourceId)) keys.add(key);
   }
@@ -69,6 +62,20 @@ function filterDeletedSourceMatches(items) {
     const key = sourceIdentityKey(item);
     return !key || !blocked.has(key);
   });
+}
+
+function extractDrmKeyFromObj(obj, fallback = '') {
+  if (!obj || typeof obj !== 'object') return fallback;
+  const candidate =
+    obj.drm_key ??
+    obj.drmKey ??
+    obj.clear_key ??
+    obj.clearKey ??
+    obj.clearkey ??
+    obj.key ??
+    fallback;
+  if (!candidate) return '';
+  return typeof candidate === 'string' ? candidate.trim() : JSON.stringify(candidate);
 }
 
 app.get('/ping', (_req, res) => res.status(200).send('SERVER_ACTIVE_OK'));
@@ -206,17 +213,42 @@ function parseM3U(text, source) {
       if (pendingOptions['http-user-agent']) headers['User-Agent'] = pendingOptions['http-user-agent'];
       if (pendingOptions['http-referrer']) headers['Referer'] = pendingOptions['http-referrer'];
       if (pendingOptions['http-cookie']) headers['Cookie'] = pendingOptions['http-cookie'];
+      const drmKey = String(a['drm-key'] || a['drmkey'] || a['key'] || pendingOptions['drm-key'] || '').trim();
       let url = line;
-      const playerType = /\.mpd(?:$|\?)/i.test(url) ? 'dash' : (/\.m3u8?(?:$|\?)/i.test(url) ? 'hls' : 'iframe');
+      const playerType = /\.mpd(?:$|[?#])/i.test(url) ? 'dash' : (/\.m3u8?(?:$|[?#])/i.test(url) ? 'hls' : 'iframe');
       const stable = `${source.id}:${channelId}`;
       channels.push({
-        id: stable, fb_key: `m3u_${Buffer.from(stable).toString('base64url').slice(0, 48)}`,
-        sourceId: source.id, sourceLabel: source.label || 'Feed', isChannelCard: true,
-        channelId, channelName, groupTitle: a['group-title'] || currentGroup,
-        logo, card: logo, category: 'Others', sub_category: a['group-title'] || currentGroup,
-        title: channelName, team_1: channelName, team_2: '', status: 'live', time: '', timezone: 'Asia/Kolkata',
-        drm_key: '',
-        servers: [{ id: `${stable}:server`, name: serverName, url, headers, isBrowser: playerType === 'iframe', playerType, sourceManaged: true, visible: true, pos: 1, drm_key: '' }]
+        id: stable,
+        fb_key: `m3u_${Buffer.from(stable).toString('base64url').slice(0, 48)}`,
+        sourceId: source.id,
+        sourceLabel: source.label || 'Feed',
+        isChannelCard: true,
+        channelId,
+        channelName,
+        groupTitle: a['group-title'] || currentGroup,
+        logo,
+        card: logo,
+        category: 'Others',
+        sub_category: a['group-title'] || currentGroup,
+        title: channelName,
+        team_1: channelName,
+        team_2: '',
+        status: 'live',
+        time: '',
+        timezone: 'Asia/Kolkata',
+        drm_key: drmKey,
+        servers: [{
+          id: `${stable}:server`,
+          name: serverName,
+          url,
+          headers,
+          isBrowser: playerType === 'iframe',
+          playerType,
+          sourceManaged: true,
+          visible: true,
+          pos: 1,
+          drm_key: drmKey
+        }]
       });
       pending = null;
     }
@@ -227,25 +259,48 @@ function parseM3U(text, source) {
 function normaliseChannelEntry(item, source, index) {
   const name = String(item.name || item.channel_name || item.tvg_name || item.title || item.tvgName || `Channel ${index + 1}`).trim();
   const channelId = String(item.id || item.channel_id || item.tvg_id || item.tvgId || name).trim();
-  
-  // Proxied URL ki మొదటి ప్రయారిటీ ఇచ్చేలా అప్‌డేట్ చేయబడింది
+
   const url = String(item.proxied_url || item.backup_proxied_url || item.raw_url || item.url || item.stream_url || item.stream || item.play_url || '').trim();
   if (!/^https?:\/\//i.test(url)) return null;
-  
+
   const logo = String(item.logo || item.tvg_logo || item.tvgLogo || item.icon || item.image || '').trim();
-  const drmKey = String(item.drm_key || item.drmKey || item.key || '').trim();
-  const playerType = /\.mpd(?:$|\?)/i.test(url) ? 'dash' : (/\.m3u8?(?:$|\?)/i.test(url) ? 'hls' : 'file');
-  
+  const drmKey = extractDrmKeyFromObj(item, '');
+  const playerType = /\.mpd(?:$|[?#])/i.test(url) ? 'dash' : (/\.m3u8?(?:$|[?#])/i.test(url) ? 'hls' : 'file');
+
   return {
-    id: `${source.id}:${channelId}`, fb_key: `m3u_${Buffer.from(`${source.id}:${channelId}`).toString('base64url').slice(0, 48)}`,
-    sourceId: source.id, sourceLabel: source.label || 'Feed', isChannelCard: true,
-    channelId, channelName: name, groupTitle: String(item.group_title || item.group || item.category || 'Live TV'),
-    logo, card: logo, category: 'Others', sub_category: String(item.group_title || item.group || 'Live TV'),
-    title: name, team_1: name, team_2: '', status: 'live', time: '', timezone: 'Asia/Kolkata',
+    id: `${source.id}:${channelId}`,
+    fb_key: `m3u_${Buffer.from(`${source.id}:${channelId}`).toString('base64url').slice(0, 48)}`,
+    sourceId: source.id,
+    sourceLabel: source.label || 'Feed',
+    isChannelCard: true,
+    channelId,
+    channelName: name,
+    groupTitle: String(item.group_title || item.group || item.category || 'Live TV'),
+    logo,
+    card: logo,
+    category: 'Others',
+    sub_category: String(item.group_title || item.group || 'Live TV'),
+    title: name,
+    team_1: name,
+    team_2: '',
+    status: 'live',
+    time: '',
+    timezone: 'Asia/Kolkata',
     drm_key: drmKey,
-    servers: [{ id: `${source.id}:${channelId}:server`, name, channelName: name, logo, url,
+    servers: [{
+      id: `${source.id}:${channelId}:server`,
+      name,
+      channelName: name,
+      logo,
+      url,
       headers: item.headers && typeof item.headers === 'object' ? item.headers : {},
-      isBrowser: false, playerType, sourceManaged: true, visible: true, pos: 1, drm_key: drmKey }],
+      isBrowser: false,
+      playerType,
+      sourceManaged: true,
+      visible: true,
+      pos: 1,
+      drm_key: drmKey
+    }],
     networkLogo: String(item.network_logo || item.networkLogo || '').trim()
   };
 }
@@ -288,12 +343,12 @@ async function fetchAndParseSource(source) {
 
     const list = Array.isArray(json) ? json : (json.Matches || json.matches || json.data || json.events || json.results || []);
     if (!Array.isArray(list)) throw new Error('JSON source has no supported matches/channels array');
-    
+
     return list.map((m, i) => {
       const title = String(m.event_name || m.title || m.synopsis || m.name || '').trim();
       const { t1, t2 } = extractTeams(m, title);
-      const matchDrmKey = String(m.drm_key || m.drmKey || m.key || '').trim();
-      
+      const matchDrmKey = extractDrmKeyFromObj(m, '');
+
       const serverGroups = [
         ['CnpTV', m.CnpTV], ['Alpha', m.stream_url_alpha],
         ['Bravo', m.stream_url_bravo], ['Streams', m.streams]
@@ -306,14 +361,14 @@ async function fetchAndParseSource(source) {
           : (typeof group === 'object' ? Object.entries(group) : []);
         for (const [key, value] of entries) {
           const entry = typeof value === 'string' ? { url: value } : (value && typeof value === 'object' ? value : {});
-          // Proxied URL లేదా raw URL ఫెచ్ చేసుకునేటప్పుడు ప్రయారిటీ ఇవ్వడం
           const streamUrl = String(entry.proxied_url || entry.backup_proxied_url || entry.raw_url || entry.url || entry.stream_url || entry.play_url || entry.src || '').trim();
           if (!/^https?:\/\//i.test(streamUrl)) continue;
           serverEntries.push({
             name: String(entry.name || `${groupName} ${key}`).trim(),
             url: streamUrl,
             headers: entry.headers && typeof entry.headers === 'object' ? entry.headers : {},
-            playerType: /\.mpd(?:$|[?#])/i.test(streamUrl) ? 'dash' : (/\.m3u8?(?:$|[?#])/i.test(streamUrl) ? 'hls' : 'file')
+            playerType: /\.mpd(?:$|[?#])/i.test(streamUrl) ? 'dash' : (/\.m3u8?(?:$|[?#])/i.test(streamUrl) ? 'hls' : 'file'),
+            drmKey: extractDrmKeyFromObj(entry, matchDrmKey)
           });
         }
       }
@@ -322,26 +377,45 @@ async function fetchAndParseSource(source) {
         const key = entry.url;
         if (seenStreamUrls.has(key)) return false;
         seenStreamUrls.add(key); return true;
-      }).map((entry, n) => ({
-        name: `${title || t1 || 'Live'} (${entry.name})`, url: entry.url,
-        headers: entry.headers, isBrowser: false, playerType: entry.playerType,
-        sourceManaged: true, visible: true, pos: n + 1,
-        drm_key: matchDrmKey,
-        drmProtected: !!matchDrmKey || !!m.drm || !!m.license_url || !!m.licenseUrl,
-        drmSystem: m.drm_system || m.drmSystem || '',
-        licenseUrl: m.license_url || m.licenseUrl || m.widevine_license_url || m.widevineLicenseUrl || ''
-      }));
+      }).map((entry, n) => {
+        const finalSrvDrm = entry.drmKey || matchDrmKey || '';
+        return {
+          name: `${title || t1 || 'Live'} (${entry.name})`,
+          url: entry.url,
+          headers: entry.headers,
+          isBrowser: false,
+          playerType: entry.playerType,
+          sourceManaged: true,
+          visible: true,
+          pos: n + 1,
+          drm_key: finalSrvDrm,
+          drmProtected: !!finalSrvDrm || !!m.drm || !!m.license_url || !!m.licenseUrl,
+          drmSystem: m.drm_system || m.drmSystem || '',
+          licenseUrl: m.license_url || m.licenseUrl || m.widevine_license_url || m.widevineLicenseUrl || ''
+        };
+      });
 
       const hasMatchDetails = !!(t1 && t2 && title);
       if (!hasMatchDetails && servers.length) {
-        return normaliseChannelEntry({ name: title || m.name || `Channel ${i + 1}`, id: m.id || m.match_id || i,
-          logo: m.logo || m.image || m.banner || m.card || '', raw_url: servers[0].url, drm_key: matchDrmKey }, source, i);
+        return normaliseChannelEntry({
+          name: title || m.name || `Channel ${i + 1}`,
+          id: m.id || m.match_id || i,
+          logo: m.logo || m.image || m.banner || m.card || '',
+          raw_url: servers[0].url,
+          drm_key: servers[0].drm_key || matchDrmKey
+        }, source, i);
       }
-      
-      return { 
-        id: String(m.match_id || m.id || `${source.id}_${i}`), sourceId: source.id,
-        sourceMatchId: String(m.match_id || m.id || `${source.id}_${i}`), title: title || `${t1} vs ${t2}`,
-        team_1: t1, team_2: t2, team_1_logo: m.team_1_logo || m.t1_logo || m.home_team_logo || m.team1_logo || '', team_2_logo: m.team_2_logo || m.t2_logo || m.away_team_logo || m.team2_logo || '', category: m.category || m.sport || m.game || 'Cricket',
+
+      return {
+        id: String(m.match_id || m.id || `${source.id}_${i}`),
+        sourceId: source.id,
+        sourceMatchId: String(m.match_id || m.id || `${source.id}_${i}`),
+        title: title || `${t1} vs ${t2}`,
+        team_1: t1,
+        team_2: t2,
+        team_1_logo: m.team_1_logo || m.t1_logo || m.home_team_logo || m.team1_logo || '',
+        team_2_logo: m.team_2_logo || m.t2_logo || m.away_team_logo || m.team2_logo || '',
+        category: m.category || m.sport || m.game || 'Cricket',
         sub_category: m.sub_category || m.series || title || `${t1} vs ${t2}`,
         card: m.banner || m.card || m.image || m.cover_image || '',
         synopsis: m.synopsis || m.description || '',
@@ -352,7 +426,7 @@ async function fetchAndParseSource(source) {
         drmProtected: !!matchDrmKey || !!m.drm || !!m.license_url || !!m.licenseUrl,
         drmSystem: m.drm_system || m.drmSystem || '',
         licenseUrl: m.license_url || m.licenseUrl || m.widevine_license_url || m.widevineLicenseUrl || '',
-        servers 
+        servers
       };
     }).filter(m => m.servers && m.servers.length);
   } finally { clearTimeout(timeout); }
@@ -393,7 +467,6 @@ app.post('/api/matches', async (req, res) => {
     if (Array.isArray(body.matches)) inMemoryMatchesCache = body.matches;
     if (Array.isArray(body.deleted_matches)) {
       inMemoryDeletedMatches = body.deleted_matches;
-      // Re-apply the latest deletion list on the next source sync request.
       sourceSyncCache.updatedAt = 0;
     }
     if (body.category_visibility) inMemoryCategoryVisibility = body.category_visibility;
@@ -434,8 +507,7 @@ app.get('/api/parse-source', async (req, res) => {
     const parsedMatches = await fetchAndParseSource(source);
     const matches = filterDeletedSourceMatches(parsedMatches);
     res.setHeader('Cache-Control', 'no-store');
-    res.json({ success: true, count: matches.length, matches,
-      suppressedDeleted: parsedMatches.length - matches.length });
+    res.json({ success: true, count: matches.length, matches, suppressedDeleted: parsedMatches.length - matches.length });
   } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
