@@ -563,4 +563,8 @@ app.get('/api/sync-stream-sources', async (_req, res) => {
 setInterval(() => { if (inMemoryStreamSources.length) syncAllSources().catch(e => console.error('Source sync:', e.message)); }, 60000);
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Render Server running on port ${PORT}`));
+if (process.env.NODE_ENV !== 'production') {
+  app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+}
+
+module.exports = app;
