@@ -25,7 +25,7 @@ function githubHeaders() {
     Authorization: `Bearer ${GITHUB_CONFIG.token}`,
     Accept: 'application/vnd.github+json',
     'X-GitHub-Api-Version': '2022-11-28',
-    'User-Agent': 'Render-Backend-LiveSync'
+    'User-Agent': 'Vercel-Backend-LiveSync'
   };
 }
 
@@ -110,7 +110,7 @@ function appendDrmToMpdUrl(streamUrl, drmKey) {
 app.get('/ping', (_req, res) => res.status(200).send('SERVER_ACTIVE_OK'));
 
 async function fetchRawJsonFromGitHub() {
-  if (!GITHUB_CONFIG.token) throw new Error('GITHUB_TOKEN environment variable is missing in Render');
+  if (!GITHUB_CONFIG.token) throw new Error('GITHUB_TOKEN environment variable is missing');
   const fileUrl = githubFileUrl(true);
   fileUrl.searchParams.set('_t', String(Date.now()));
   const ghRes = await fetch(fileUrl, { headers: githubHeaders() });
@@ -131,10 +131,26 @@ async function fetchRawJsonFromGitHub() {
     throw new Error('GitHub matches.json must contain a JSON object');
   }
 
-  if (Array.isArray(parsedData.cloudflare_matches)) inMemoryMatchesCache = parsedData.cloudflare_matches;
-  else if (!githubLoaded) inMemoryMatchesCache = [];
-  if (Array.isArray(parsedData.cloudflare_deleted_matches)) inMemoryDeletedMatches = parsedData.cloudflare_deleted_matches;
-  else if (!githubLoaded) inMemoryDeletedMatches = [];
+  // cloudflare_matches మరియు matches రెండింటినీ కలిపి తీసుకోవడం
+  const cfMatches = Array.isArray(parsedData.cloudflare_matches) ? parsedData.cloudflare_matches : [];
+  const ghMatches = Array.isArray(parsedData.matches) ? parsedData.matches : [];
+  
+  const allCombined = [...cfMatches];
+  const seenIds = new Set(cfMatches.map(m => String(m.fb_key || m.id)));
+  ghMatches.forEach(m => {
+    const k = String(m.fb_key || m.id);
+    if (!seenIds.has(k)) {
+      seenIds.add(k);
+      allCombined.push(m);
+    }
+  });
+  
+  inMemoryMatchesCache = allCombined;
+
+  const cfDeleted = Array.isArray(parsedData.cloudflare_deleted_matches) ? parsedData.cloudflare_deleted_matches : [];
+  const ghDeleted = Array.isArray(parsedData.deleted_matches) ? parsedData.deleted_matches : [];
+  inMemoryDeletedMatches = [...cfDeleted, ...ghDeleted];
+
   if (parsedData.category_visibility && typeof parsedData.category_visibility === 'object') inMemoryCategoryVisibility = parsedData.category_visibility;
   if (parsedData.sub_categories && typeof parsedData.sub_categories === 'object') inMemorySubCategories = parsedData.sub_categories;
   if (Array.isArray(parsedData.stream_sources)) inMemoryStreamSources = parsedData.stream_sources;
@@ -144,7 +160,7 @@ async function fetchRawJsonFromGitHub() {
 }
 
 async function pushJsonToGitHub(payload) {
-  if (!GITHUB_CONFIG.token) throw new Error('GITHUB_TOKEN environment variable is missing in Render');
+  if (!GITHUB_CONFIG.token) throw new Error('GITHUB_TOKEN environment variable is missing');
   const write = async () => {
     const fileUrl = githubFileUrl(false);
     const readUrl = githubFileUrl(true);
@@ -174,7 +190,7 @@ async function pushJsonToGitHub(payload) {
       method: 'PUT',
       headers: { ...headers, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        message: `Render Auto-Sync: ${new Date().toISOString()}`,
+        message: `Vercel Auto-Sync: ${new Date().toISOString()}`,
         content,
         sha: file.sha,
         branch: GITHUB_CONFIG.branch
@@ -480,17 +496,36 @@ async function syncAllSources() {
   } finally { sourceSyncRunning = false; }
 }
 
-(async () => { try { await fetchRawJsonFromGitHub(); console.log('GitHub matches preloaded'); } catch (e) { console.warn('GitHub preload:', e.message); } })();
+(async () => { try { await fetchRawJsonFromGitHub(); } catch (e) { console.warn('GitHub preload:', e.message); } })();
 
 app.get('/api/raw-matches', async (_req, res) => {
   res.setHeader('Cache-Control', 'no-store');
-  try { if (!githubLoaded) await fetchRawJsonFromGitHub(); res.json({ success: true, v: serverDataVersion, category_visibility: inMemoryCategoryVisibility, sub_categories: inMemorySubCategories, matches: inMemoryMatchesCache, deleted_matches: inMemoryDeletedMatches }); }
+  try { 
+    if (!githubLoaded || inMemoryMatchesCache.length === 0) await fetchRawJsonFromGitHub(); 
+    res.json({ 
+      success: true, 
+      v: serverDataVersion, 
+      category_visibility: inMemoryCategoryVisibility, 
+      sub_categories: inMemorySubCategories, 
+      matches: inMemoryMatchesCache, 
+      deleted_matches: inMemoryDeletedMatches 
+    }); 
+  }
   catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
 app.get('/api/matches', async (_req, res) => {
   res.setHeader('Cache-Control', 'no-store');
-  try { if (!githubLoaded) await fetchRawJsonFromGitHub(); res.json({ v: serverDataVersion, category_visibility: inMemoryCategoryVisibility, sub_categories: inMemorySubCategories, matches: inMemoryMatchesCache, deleted_matches: inMemoryDeletedMatches }); }
+  try { 
+    if (!githubLoaded || inMemoryMatchesCache.length === 0) await fetchRawJsonFromGitHub(); 
+    res.json({ 
+      v: serverDataVersion, 
+      category_visibility: inMemoryCategoryVisibility, 
+      sub_categories: inMemorySubCategories, 
+      matches: inMemoryMatchesCache, 
+      deleted_matches: inMemoryDeletedMatches 
+    }); 
+  }
   catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -506,8 +541,16 @@ app.post('/api/matches', async (req, res) => {
     if (body.sub_categories) inMemorySubCategories = body.sub_categories;
     if (body.timerStatePayload) { inMemoryTimerState = { ...inMemoryTimerState, ...body.timerStatePayload }; delete body.timerStatePayload; }
     serverDataVersion = Date.now().toString();
-    const stored = await pushJsonToGitHub({ category_visibility: inMemoryCategoryVisibility, sub_categories: inMemorySubCategories, cloudflare_matches: inMemoryMatchesCache, cloudflare_deleted_matches: inMemoryDeletedMatches, stream_sources: inMemoryStreamSources });
-    if (!stored) throw new Error('Cloudflare database persistence failed');
+    const stored = await pushJsonToGitHub({ 
+      category_visibility: inMemoryCategoryVisibility, 
+      sub_categories: inMemorySubCategories, 
+      cloudflare_matches: inMemoryMatchesCache.filter(m => m._dbSource === 'cloudflare'), 
+      matches: inMemoryMatchesCache.filter(m => m._dbSource !== 'cloudflare'), 
+      cloudflare_deleted_matches: inMemoryDeletedMatches.filter(m => m._dbSource === 'cloudflare'), 
+      deleted_matches: inMemoryDeletedMatches.filter(m => m._dbSource !== 'cloudflare'), 
+      stream_sources: inMemoryStreamSources 
+    });
+    if (!stored) throw new Error('Database persistence failed');
     res.json({ success: true, v: serverDataVersion, persisted: true });
   } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
@@ -520,7 +563,9 @@ app.get('/api/matches/version', async (_req, res) => {
     res.json({ v: serverDataVersion });
   }
 });
+
 app.get('/api/timer-state', (_req, res) => res.json(inMemoryTimerState));
+
 app.get('/api/stream-sources', async (_req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   try {
