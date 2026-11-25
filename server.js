@@ -512,9 +512,26 @@ app.post('/api/matches', async (req, res) => {
   } catch (e) { res.status(500).json({ success: false, error: e.message }); }
 });
 
-app.get('/api/matches/version', (_req, res) => res.json({ v: serverDataVersion }));
+app.get('/api/matches/version', async (_req, res) => {
+  try {
+    if (!githubLoaded) await fetchRawJsonFromGitHub();
+    res.json({ v: serverDataVersion });
+  } catch(e) {
+    res.json({ v: serverDataVersion });
+  }
+});
 app.get('/api/timer-state', (_req, res) => res.json(inMemoryTimerState));
-app.get('/api/stream-sources', (_req, res) => res.setHeader('Cache-Control', 'no-store').json(inMemoryStreamSources));
+app.get('/api/stream-sources', async (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  try {
+    if (!githubLoaded || inMemoryStreamSources.length === 0) {
+      await fetchRawJsonFromGitHub();
+    }
+    res.json(inMemoryStreamSources);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 app.post('/api/stream-sources', async (req, res) => {
   const { id, label, url } = req.body || {};
