@@ -468,7 +468,14 @@ async function fetchAndParseSource(source) {
         sub_category: m.sub_category || m.series || title || `${t1} vs ${t2}`,
         card: m.banner || m.card || m.image || m.cover_image || '',
         synopsis: m.synopsis || m.description || '',
-        status: /finish|ended|\bft\b|complete/i.test(String(m.status || m.match_status || 'live')) ? 'finished' : 'live',
+        status: (() => {
+          const rawStatus = String(m.status || m.match_status || m.state || '').toLowerCase();
+          const rawTime = m.time || m.match_time || m.date_time || m.date || m.start_time || '';
+          const parsedTime = rawTime ? new Date(rawTime).getTime() : NaN;
+          if (/finish|ended|\bft\b|complete|result|abandon|no result|drawn/i.test(rawStatus)) return 'finished';
+          if (/upcoming|scheduled|fixture|not started|starts at|toss/i.test(rawStatus) || (!/live|progress|innings|stumps/i.test(rawStatus) && Number.isFinite(parsedTime) && parsedTime > Date.now())) return 'upcoming';
+          return 'live';
+        })(),
         time: m.time || m.match_time || m.date_time || m.date || m.start_time || '',
         timezone: m.timezone || m.tz || 'Asia/Kolkata',
         drm_key: matchDrmKey,
@@ -565,6 +572,116 @@ app.get('/api/matches/version', async (_req, res) => {
 });
 
 app.get('/api/timer-state', (_req, res) => res.json(inMemoryTimerState));
+
+
+// ---------------------------------------------------------------------------
+// Public score lookup for Cricbuzz / ESPN match URLs.
+// Returns a consistent payload consumed by the existing IPTV admin + score sync.
+// ---------------------------------------------------------------------------
+function decodeScoreHtml(value) {
+  return String(value || '')
+    .replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&')
+    .replace(/&quot;/gi, '"').replace(/&#39;/gi, "'")
+    .replace(/&lt;/gi, '<').replace(/&gt;/gi, '>')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ').trim();
+}
+function extractCricbuzzId(input) {
+  const s = String(input || '').trim();
+  const m = s.match(/(?:live-cricket-scorecard|live-cricket-match|cricket-match|live-cricket-scores|cricket-scorecard)\/(\d+)/i);
+  if (m) return m[1];
+  if (/^\d{5,8}$/.test(s)) return s;
+  return '';
+}
+function parseScoreText(html, originalUrl) {
+  const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  const title = decodeScoreHtml(titleMatch ? titleMatch[1] : '');
+  const text = decodeScoreHtml(html);
+  const vsMatch = (title + ' ' + text).match(/([A-Za-z][A-Za-z .&'()-]{1,45})\s+vs\.?\s+([A-Za-z][A-Za-z .&'()-]{1,45})/i);
+  const t1 = vsMatch ? vsMatch[1].replace(/\s+-.*$/, '').trim() : '';
+  const t2 = vsMatch ? vsMatch[2].split(/\s+(?:live|scorecard|cricket|match|commentary)\b/i)[0].trim() : '';
+
+  const scoreMatches = [...text.matchAll(/\b(\d{1,4}(?:\/\d{1,2})?)\s*\((\d{1,2}(?:\.\d+)?)\s*Ov(?:ers?)?\.?\)/gi)];
+  const scores = [];
+  for (const m of scoreMatches) {
+    const val = `${m[1]} (${m[2]} Ov)`;
+    if (!scores.includes(val)) scores.push(val);
+    if (scores.length === 2) break;
+  }
+  const statusText = (text.match(/(Match\s+(?:in progress|delayed|abandoned|tied|drawn|won|completed|ended)|Innings\s+break|Stumps|Day\s+\d+|Yet to bat|Starts at[^.]{0,80}|Scheduled|Live now|Live)/i) || [])[0] || '';
+  const lower = `${title} ${statusText} ${text.slice(-1200)}`.toLowerCase();
+  const isFinished = /\b(match won|won by|match drawn|match tied|abandoned|no result|innings defeat|match completed|stumps|match ended)\b/.test(lower);
+  const isLive = !isFinished && (/\b(live|in progress|innings break|day \d+|stumps)\b/.test(lower) || scores.length > 0);
+  const dateMatch = text.match(/(?:Starts|Start|Scheduled)\s*(?:at|:)?\s*([A-Z][a-z]{2,8}\s+\d{1,2},?\s+\d{4}[^.]{0,35})/i);
+  let startTime = '';
+  if (dateMatch) {
+    const parsed = new Date(dateMatch[1]);
+    if (!Number.isNaN(parsed.getTime())) startTime = parsed.toISOString();
+  }
+  const isUpcoming = !isLive && !isFinished;
+  return {
+    success: !!(t1 || t2 || scores.length || statusText),
+    t1, t2, t1_score: scores[0] || '', t2_score: scores[1] || '',
+    isLive, isFinished, isUpcoming, startTime, startTimeGMT: startTime, dateTimeGMT: startTime,
+    api_status: isFinished ? 'FINISHED' : isLive ? 'LIVE' : 'UPCOMING',
+    statusNotice: statusText || (isFinished ? 'MATCH FINISHED' : isLive ? 'LIVE' : 'UPCOMING'),
+    dynamicBadge: isFinished ? 'MATCH ENDED' : isLive ? (statusText || 'LIVE') : 'UPCOMING',
+    scoreSource: originalUrl
+  };
+}
+
+app.get('/api/fetch-score', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const input = String(req.query.id || '').trim();
+  if (!input) return res.status(400).json({ success: false, message: 'Missing match URL or ID' });
+  try {
+    let targetUrl = '';
+    if (/^\d{5,8}$/.test(input)) {
+      targetUrl = `https://www.cricbuzz.com/live-cricket-scorecard/${input}`;
+    } else {
+      let parsed;
+      try { parsed = new URL(input); } catch (_) { return res.status(400).json({ success: false, message: 'Enter a valid Cricbuzz or ESPN match URL / ID' }); }
+      const host = parsed.hostname.toLowerCase();
+      if (!(host === 'cricbuzz.com' || host.endsWith('.cricbuzz.com') || host === 'espncricinfo.com' || host.endsWith('.espncricinfo.com') || host === 'espn.in' || host.endsWith('.espn.in'))) {
+        return res.status(400).json({ success: false, message: 'Only Cricbuzz / ESPNcricinfo match URLs are supported' });
+      }
+      targetUrl = parsed.toString();
+    }
+
+    const id = extractCricbuzzId(input);
+    const candidates = id
+      ? [`https://www.cricbuzz.com/api/html/cricket-scorecard/${id}`, targetUrl]
+      : [targetUrl];
+    let lastError = '';
+    for (const candidate of candidates) {
+      try {
+        const response = await fetch(candidate, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36',
+            'Accept': 'text/html,application/json;q=0.9,*/*;q=0.8',
+            'Referer': 'https://www.cricbuzz.com/'
+          },
+          signal: AbortSignal.timeout(15000)
+        });
+        if (!response.ok) { lastError = `Score provider returned HTTP ${response.status}`; continue; }
+        const body = await response.text();
+        const result = parseScoreText(body, targetUrl);
+        if (result.success) {
+          result.matchId = id || '';
+          result.provider = candidate.includes('cricbuzz') ? 'Cricbuzz' : 'ESPNcricinfo';
+          result.calculatedFinishedDate = result.isFinished ? new Date().toISOString() : '';
+          return res.json(result);
+        }
+        lastError = 'Could not identify team names or score from the supplied match page';
+      } catch (e) { lastError = e.message; }
+    }
+    return res.status(502).json({ success: false, message: lastError || 'Could not retrieve match score' });
+  } catch (e) {
+    return res.status(500).json({ success: false, message: e.message });
+  }
+});
 
 app.get('/api/stream-sources', async (_req, res) => {
   res.setHeader('Cache-Control', 'no-store');
